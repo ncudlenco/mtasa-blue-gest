@@ -72,11 +72,6 @@ private:
     IDirect3DSurface9*      m_pSegDepthStencil;         // seg-owned DS; frontmost-wins per replay-pixel
     IDirect3DSurface9*      m_pDepthSurface;
 
-    // Weak reference to the primary backbuffer, refreshed each OnPresent.
-    // Used only for identity comparison to gate seg replays onto backbuffer-
-    // bound draws (skipping reflection/water/shadow passes).
-    IDirect3DSurface9*      m_pBackBufferRef;
-
     IDirect3DDevice9*       m_pDevice;
 
     ID3D11Device*           m_pD3D11Device;

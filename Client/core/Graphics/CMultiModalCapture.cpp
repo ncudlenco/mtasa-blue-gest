@@ -42,7 +42,6 @@ CMultiModalCapture::CMultiModalCapture()
       m_pSegmentationSnapshot(nullptr),
       m_pSegDepthStencil(nullptr),
       m_pDepthSurface(nullptr),
-      m_pBackBufferRef(nullptr),
       m_pDevice(nullptr),
       m_pD3D11Device(nullptr),
       m_pD3D11Context(nullptr),
@@ -205,7 +204,6 @@ void CMultiModalCapture::ReleaseRenderTargets()
     if (m_pSegmentationSnapshot)  { m_pSegmentationSnapshot->Release();  m_pSegmentationSnapshot = nullptr; }
     if (m_pSegDepthStencil)       { m_pSegDepthStencil->Release();       m_pSegDepthStencil = nullptr; }
     if (m_pDepthSurface)          { m_pDepthSurface->Release();          m_pDepthSurface = nullptr; }
-    if (m_pBackBufferRef)         { m_pBackBufferRef->Release();         m_pBackBufferRef = nullptr; }
 }
 
 // HLSL source for the depth visualization pass. Samples the bound INTZ texture
@@ -713,20 +711,14 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
 
     // Snapshot the backbuffer — the ONLY reliable moment, before the DISCARD
     // swap chain invalidates its content at Present() time.
-    // Also refresh the weak backbuffer pointer used by the seg replay gate.
-    IDirect3DSurface9* pBackBuffer = nullptr;
-    if (SUCCEEDED(pDevice->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer)) && pBackBuffer)
+    if (m_pRGBSurface)
     {
-        if (m_pRGBSurface)
-            pDevice->StretchRect(pBackBuffer, nullptr, m_pRGBSurface, nullptr, D3DTEXF_NONE);
-
-        if (m_pBackBufferRef != pBackBuffer)
+        IDirect3DSurface9* pBackBuffer = nullptr;
+        if (SUCCEEDED(pDevice->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer)) && pBackBuffer)
         {
-            if (m_pBackBufferRef) m_pBackBufferRef->Release();
-            pBackBuffer->AddRef();
-            m_pBackBufferRef = pBackBuffer;
+            pDevice->StretchRect(pBackBuffer, nullptr, m_pRGBSurface, nullptr, D3DTEXF_NONE);
+            pBackBuffer->Release();
         }
-        pBackBuffer->Release();
     }
 
     // Snapshot the seg surface too. captureMultiModalFrame fires from a Lua
@@ -874,19 +866,24 @@ static bool IsInGtaSceneOnly()
         && !g_bInMTAScene.load(std::memory_order_acquire);
 }
 
-// Only replay draws whose current RT is the primary backbuffer. Reflection,
-// water, shadow and similar off-screen passes target auxiliary RTs; their
-// geometry is authored in NDC that fills those sub-targets, so replaying
-// them onto our full-resolution seg RT would paint the whole seg surface
-// one color. These passes don't contribute to the final screenshot anyway.
-static bool IsDrawingToBackbuffer(IDirect3DDevice9* pDevice, IDirect3DSurface9* pBackBufferRef)
+// Only replay draws whose current render target matches the seg RT's
+// dimensions. Reflection / water / shadow / cubemap passes target smaller
+// auxiliary RTs; their geometry is authored in NDC [-1,1] filling those
+// sub-targets, so replaying them onto our full-resolution seg RT would
+// paint the whole seg surface one colour. A size match accepts both the
+// literal swap-chain backbuffer and any full-size intermediate RT (GTA's
+// tonemap input, MTA's borderless compositor input, etc.) — all of which
+// do belong in the final screenshot's segmentation ground truth.
+// Pointer-identity against GetBackBuffer was too strict: world rendering
+// typically targets a full-size intermediate, not the literal backbuffer.
+static bool IsDrawingToFullSizeRT(IDirect3DDevice9* pDevice, UINT expectedW, UINT expectedH)
 {
-    if (!pBackBufferRef) return false;
     IDirect3DSurface9* pCurRT = nullptr;
-    pDevice->GetRenderTarget(0, &pCurRT);
-    bool match = (pCurRT == pBackBufferRef);
-    if (pCurRT) pCurRT->Release();
-    return match;
+    if (FAILED(pDevice->GetRenderTarget(0, &pCurRT)) || !pCurRT) return false;
+    D3DSURFACE_DESC desc = {};
+    HRESULT hr = pCurRT->GetDesc(&desc);
+    pCurRT->Release();
+    return SUCCEEDED(hr) && desc.Width == expectedW && desc.Height == expectedH;
 }
 
 void CMultiModalCapture::EmitSegmentationDraw(IDirect3DDevice9* pDevice,
@@ -897,7 +894,7 @@ void CMultiModalCapture::EmitSegmentationDraw(IDirect3DDevice9* pDevice,
     if (!m_bSegmentationEnabled) return;
     if (!IsInGtaSceneOnly()) return;
     if (!pDevice || !m_pSegmentationSurface || !m_pSegDepthStencil || !m_pConstantColorShader) return;
-    if (!IsDrawingToBackbuffer(pDevice, m_pBackBufferRef)) return;
+    if (!IsDrawingToFullSizeRT(pDevice, static_cast<UINT>(m_iCaptureWidth), static_cast<UINT>(m_iCaptureHeight))) return;
 
     EmitSegmentationCommon(pDevice, m_pSegmentationSurface, m_pSegDepthStencil,
                            m_pConstantColorShader,
@@ -918,7 +915,7 @@ void CMultiModalCapture::EmitSegmentationDrawIndexed(IDirect3DDevice9* pDevice,
     if (!m_bSegmentationEnabled) return;
     if (!IsInGtaSceneOnly()) return;
     if (!pDevice || !m_pSegmentationSurface || !m_pSegDepthStencil || !m_pConstantColorShader) return;
-    if (!IsDrawingToBackbuffer(pDevice, m_pBackBufferRef)) return;
+    if (!IsDrawingToFullSizeRT(pDevice, static_cast<UINT>(m_iCaptureWidth), static_cast<UINT>(m_iCaptureHeight))) return;
 
     EmitSegmentationCommon(pDevice, m_pSegmentationSurface, m_pSegDepthStencil,
                            m_pConstantColorShader,
