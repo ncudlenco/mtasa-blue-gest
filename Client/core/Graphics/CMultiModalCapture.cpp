@@ -757,42 +757,46 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
                                                  &m_pSegPixelProbeSurface, nullptr);
         }
 
-        // Sample a handful of positions from the snapshot to see what's there.
-        uint32_t samples[5] = {0, 0, 0, 0, 0};
+        // Sample from both the snapshot AND the live seg RT. If they differ,
+        // the StretchRect(seg→snapshot) is the culprit; if they agree but
+        // aren't the colours we expect, replays themselves aren't painting.
+        uint32_t snapSamples[5] = {0, 0, 0, 0, 0};
+        uint32_t liveSamples[5] = {0, 0, 0, 0, 0};
         const int sx[5] = { 10,                     m_iCaptureWidth / 4,
                             m_iCaptureWidth / 2,    m_iCaptureWidth * 3 / 4,
                             m_iCaptureWidth - 10 };
         const int sy = m_iCaptureHeight / 2;
-        if (m_pSegPixelProbeSurface && m_pSegmentationSnapshot)
+        auto sampleFrom = [&](IDirect3DSurface9* src, uint32_t (&out)[5])
         {
+            if (!m_pSegPixelProbeSurface || !src) return;
             for (int i = 0; i < 5; ++i)
             {
                 RECT r = { sx[i], sy, sx[i] + 1, sy + 1 };
-                if (SUCCEEDED(pDevice->StretchRect(m_pSegmentationSnapshot, &r,
-                                                    m_pSegPixelProbeSurface, nullptr, D3DTEXF_NONE)))
+                if (SUCCEEDED(pDevice->StretchRect(src, &r, m_pSegPixelProbeSurface, nullptr, D3DTEXF_NONE)))
                 {
                     D3DLOCKED_RECT lr;
                     if (SUCCEEDED(m_pSegPixelProbeSurface->LockRect(&lr, nullptr, D3DLOCK_READONLY)))
                     {
-                        samples[i] = *reinterpret_cast<uint32_t*>(lr.pBits) & 0x00FFFFFFu;
+                        out[i] = *reinterpret_cast<uint32_t*>(lr.pBits) & 0x00FFFFFFu;
                         m_pSegPixelProbeSurface->UnlockRect();
                     }
                 }
             }
-        }
+        };
+        sampleFrom(m_pSegmentationSnapshot, snapSamples);
+        sampleFrom(m_pSegmentationSurface,  liveSamples);
 
-        char buf[512];
+        char buf[768];
         snprintf(buf, sizeof(buf),
-                 "[SegDiag] emit=%d enabled=%d scene=%d res=%d size=%d fired=%d uniqueCols=%zu "
-                 "px@(10,%d)=%06X px@(%d,%d)=%06X px@(%d,%d)=%06X px@(%d,%d)=%06X px@(%d,%d)=%06X\n",
+                 "[SegDiag] emit=%d enabled=%d scene=%d res=%d size=%d fired=%d uniqueCols=%zu\n"
+                 "  snap@y=%d: %06X %06X %06X %06X %06X   (x=%d,%d,%d,%d,%d)\n"
+                 "  live@y=%d: %06X %06X %06X %06X %06X\n",
                  m_SegStats.emitCalls, m_SegStats.passedEnabled, m_SegStats.passedScene,
                  m_SegStats.passedResources, m_SegStats.passedSizeGate, m_SegStats.drawsFired,
                  m_SegUniqueColorsThisFrame.size(),
-                 sy, samples[0],
-                 sx[1], sy, samples[1],
-                 sx[2], sy, samples[2],
-                 sx[3], sy, samples[3],
-                 sx[4], sy, samples[4]);
+                 sy, snapSamples[0], snapSamples[1], snapSamples[2], snapSamples[3], snapSamples[4],
+                 sx[0], sx[1], sx[2], sx[3], sx[4],
+                 sy, liveSamples[0], liveSamples[1], liveSamples[2], liveSamples[3], liveSamples[4]);
         writeLine(buf);
 
         // RT-size histogram (top 5 buckets).
@@ -933,9 +937,12 @@ static void EmitSegmentationCommon(IDirect3DDevice9*      pDevice,
 
     if (needsClearFlag)
     {
-        // Clear both color and depth: color → background sentinel, depth → 1.0
-        // (far plane) so any real world-space geometry wins LESSEQUAL.
-        pDevice->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0, 1.0f, 0);
+        // DIAG: clear to magenta instead of black so a sampled seg pixel of
+        // FF00FF means "clear ran, no replay painted this pixel", 000000
+        // means "something zeroed the RT after our replays", and any other
+        // value means "replay landed this texture's colour here".
+        pDevice->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,
+                       D3DCOLOR_XRGB(255, 0, 255), 1.0f, 0);
         needsClearFlag = false;
     }
 
