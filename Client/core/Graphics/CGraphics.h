@@ -18,6 +18,7 @@ class CGraphics;
 #include "CGUI.h"
 #include "CSingleton.h"
 #include "CRenderItemManager.h"
+#include <atomic>
 
 #define DUMMY_PROGRESS_INITIAL_DELAY        1000    // Game stall time before spinner is displayed
 #define DUMMY_PROGRESS_MIN_DISPLAY_TIME     1000    // Minimum time spinner is drawn (to prevent flicker)
@@ -169,6 +170,11 @@ public:
     CRenderItemManagerInterface* GetRenderItemManager() { return m_pRenderItemManager; }
     CScreenGrabberInterface*     GetScreenGrabber() { return m_pScreenGrabber; }
     CPixelsManagerInterface*     GetPixelsManager() { return m_pPixelsManager; }
+    IMultiModalCapture*          GetMultiModalCapture() { return m_pMultiModalCapture; }
+
+    // Clean capture mode (see CGraphicsInterface).
+    void SetCleanCaptureMode(bool bEnabled) override { m_bCleanCaptureMode.store(bEnabled, std::memory_order_release); }
+    bool IsCleanCaptureMode() const override { return m_bCleanCaptureMode.load(std::memory_order_acquire); }
 
     // Transition between GTA and MTA controlled rendering
     virtual void EnteringMTARenderZone();
@@ -244,6 +250,8 @@ private:
     CMaterialPrimitive3DBatcher* m_pMaterialPrimitive3DBatcherPostFX = nullptr;
     CMaterialPrimitive3DBatcher* m_pMaterialPrimitive3DBatcherPostGUI = nullptr;
     CAspectRatioConverter*       m_pAspectRatioConverter = nullptr;
+    IMultiModalCapture*          m_pMultiModalCapture = nullptr;
+    std::atomic<bool>            m_bCleanCaptureMode{false};
 
     // Fonts
     ID3DXFont* m_pDXFonts[NUM_FONTS];
