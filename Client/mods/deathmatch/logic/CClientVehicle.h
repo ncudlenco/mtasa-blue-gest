@@ -17,6 +17,10 @@ class CClientVehicle;
 #include <game/CVehicle.h>
 #include <game/CModelInfo.h>
 #include <game/CVehicleAudioSettingsEntry.h>
+#include <game/CHandlingEntry.h>
+#include <game/CBikeHandlingEntry.h>
+#include <game/CBoatHandlingEntry.h>
+#include <game/CFlyingHandlingEntry.h>
 
 #include "CClientCommon.h"
 #include "CClientCamera.h"
@@ -27,8 +31,6 @@ class CClientVehicle;
 #include "CVehicleUpgrades.h"
 #include "CClientModel.h"
 
-class CBikeHandlingEntry;
-class CBoatHandlingEntry;
 class CClientProjectile;
 
 #define INVALID_PASSENGER_SEAT 0xFF
