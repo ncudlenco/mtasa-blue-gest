@@ -42,7 +42,6 @@ CMultiModalCapture::CMultiModalCapture()
       m_pSegmentationSnapshot(nullptr),
       m_pSegDepthStencil(nullptr),
       m_pDepthSurface(nullptr),
-      m_pSegPixelProbeSurface(nullptr),
       m_pDevice(nullptr),
       m_pD3D11Device(nullptr),
       m_pD3D11Context(nullptr),
@@ -205,7 +204,6 @@ void CMultiModalCapture::ReleaseRenderTargets()
     if (m_pSegmentationSnapshot)  { m_pSegmentationSnapshot->Release();  m_pSegmentationSnapshot = nullptr; }
     if (m_pSegDepthStencil)       { m_pSegDepthStencil->Release();       m_pSegDepthStencil = nullptr; }
     if (m_pDepthSurface)          { m_pDepthSurface->Release();          m_pDepthSurface = nullptr; }
-    if (m_pSegPixelProbeSurface)  { m_pSegPixelProbeSurface->Release();  m_pSegPixelProbeSurface = nullptr; }
 }
 
 // HLSL source for the depth visualization pass. Samples the bound INTZ texture
@@ -723,33 +721,6 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
         }
     }
 
-    // DIAG nuclear test — force a Clear of the seg RT to cyan from OnPresent's
-    // own context (bypassing the Emit path entirely). If a later sample still
-    // shows 000000 after this, the seg RT pointer/device is invalid. If it
-    // shows 00FFFF, the seg RT is reachable and the Emit-time clear/draws
-    // are where the failure lives.
-    HRESULT hrForceClear = E_FAIL;
-    if (m_bSegmentationEnabled && m_pSegmentationSurface)
-    {
-        IDirect3DSurface9* pSaveRT = nullptr;
-        IDirect3DSurface9* pSaveDS = nullptr;
-        pDevice->GetRenderTarget(0, &pSaveRT);
-        pDevice->GetDepthStencilSurface(&pSaveDS);
-        HRESULT hrSet = pDevice->SetRenderTarget(0, m_pSegmentationSurface);
-        pDevice->SetDepthStencilSurface(nullptr);    // no DS needed for a plain colour clear
-        hrForceClear = pDevice->Clear(0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 255, 255), 1.0f, 0);
-        pDevice->SetRenderTarget(0, pSaveRT);
-        pDevice->SetDepthStencilSurface(pSaveDS);
-        if (pSaveRT) pSaveRT->Release();
-        if (pSaveDS) pSaveDS->Release();
-        char hrBuf[128];
-        snprintf(hrBuf, sizeof(hrBuf), "[SegDiag] forceClear: SetRT=0x%08X Clear=0x%08X\n",
-                 static_cast<unsigned>(hrSet), static_cast<unsigned>(hrForceClear));
-        OutputDebugStringA(hrBuf);
-        static std::ofstream s_log2("seg_diag.log", std::ios::out | std::ios::app | std::ios::binary);
-        if (s_log2.is_open()) { s_log2 << hrBuf; s_log2.flush(); }
-    }
-
     // Snapshot the seg surface too. captureMultiModalFrame fires from a Lua
     // event that runs AFTER Present, which is already inside frame N+1 — by
     // then the first Emit* of N+1 has cleared the live seg surface and only
@@ -777,53 +748,17 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
             OutputDebugStringA(s);
             if (s_segLog.is_open()) { s_segLog << s; s_segLog.flush(); }
         };
-        // Lazily create a 1x1 sysmem probe surface for center-pixel readback.
-        if (!m_pSegPixelProbeSurface)
-        {
-            pDevice->CreateOffscreenPlainSurface(1, 1, D3DFMT_X8R8G8B8, D3DPOOL_SYSTEMMEM,
-                                                 &m_pSegPixelProbeSurface, nullptr);
-        }
-
-        // Sample from both the snapshot AND the live seg RT. If they differ,
-        // the StretchRect(seg→snapshot) is the culprit; if they agree but
-        // aren't the colours we expect, replays themselves aren't painting.
-        uint32_t snapSamples[5] = {0, 0, 0, 0, 0};
-        uint32_t liveSamples[5] = {0, 0, 0, 0, 0};
-        const int sx[5] = { 10,                     m_iCaptureWidth / 4,
-                            m_iCaptureWidth / 2,    m_iCaptureWidth * 3 / 4,
-                            m_iCaptureWidth - 10 };
-        const int sy = m_iCaptureHeight / 2;
-        auto sampleFrom = [&](IDirect3DSurface9* src, uint32_t (&out)[5])
-        {
-            if (!m_pSegPixelProbeSurface || !src) return;
-            for (int i = 0; i < 5; ++i)
-            {
-                RECT r = { sx[i], sy, sx[i] + 1, sy + 1 };
-                if (SUCCEEDED(pDevice->StretchRect(src, &r, m_pSegPixelProbeSurface, nullptr, D3DTEXF_NONE)))
-                {
-                    D3DLOCKED_RECT lr;
-                    if (SUCCEEDED(m_pSegPixelProbeSurface->LockRect(&lr, nullptr, D3DLOCK_READONLY)))
-                    {
-                        out[i] = *reinterpret_cast<uint32_t*>(lr.pBits) & 0x00FFFFFFu;
-                        m_pSegPixelProbeSurface->UnlockRect();
-                    }
-                }
-            }
-        };
-        sampleFrom(m_pSegmentationSnapshot, snapSamples);
-        sampleFrom(m_pSegmentationSurface,  liveSamples);
-
-        char buf[768];
+        // Per-frame counters only. The previous pixel probe was bogus —
+        // StretchRect to a D3DPOOL_SYSTEMMEM surface silently fails in D3D9,
+        // so the samples were always 000000 regardless of RT contents. Use
+        // the actual saved seg PNG on disk as the ground-truth observation
+        // of what landed on the seg RT.
+        char buf[256];
         snprintf(buf, sizeof(buf),
-                 "[SegDiag] emit=%d enabled=%d scene=%d res=%d size=%d fired=%d uniqueCols=%zu\n"
-                 "  snap@y=%d: %06X %06X %06X %06X %06X   (x=%d,%d,%d,%d,%d)\n"
-                 "  live@y=%d: %06X %06X %06X %06X %06X\n",
+                 "[SegDiag] emit=%d enabled=%d scene=%d res=%d size=%d fired=%d uniqueCols=%zu\n",
                  m_SegStats.emitCalls, m_SegStats.passedEnabled, m_SegStats.passedScene,
                  m_SegStats.passedResources, m_SegStats.passedSizeGate, m_SegStats.drawsFired,
-                 m_SegUniqueColorsThisFrame.size(),
-                 sy, snapSamples[0], snapSamples[1], snapSamples[2], snapSamples[3], snapSamples[4],
-                 sx[0], sx[1], sx[2], sx[3], sx[4],
-                 sy, liveSamples[0], liveSamples[1], liveSamples[2], liveSamples[3], liveSamples[4]);
+                 m_SegUniqueColorsThisFrame.size());
         writeLine(buf);
 
         // RT-size histogram (top 5 buckets).

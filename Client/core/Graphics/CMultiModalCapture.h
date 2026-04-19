@@ -110,7 +110,6 @@ private:
     SSegFrameStats                     m_SegStats;
     std::unordered_set<uint32_t>       m_SegUniqueColorsThisFrame;
     std::map<uint64_t, int>            m_SegRTSizeBucket;           // (w<<32|h) -> count of Emit calls at that size
-    IDirect3DSurface9*                 m_pSegPixelProbeSurface;     // 1x1 sysmem readback for center-pixel sample
 
     // INTZ depth-stencil (Stage 6). INTZ is a FourCC depth format that's
     // simultaneously a depth-stencil target and a sampleable texture, so the
