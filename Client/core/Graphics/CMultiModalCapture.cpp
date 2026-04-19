@@ -723,6 +723,33 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
         }
     }
 
+    // DIAG nuclear test — force a Clear of the seg RT to cyan from OnPresent's
+    // own context (bypassing the Emit path entirely). If a later sample still
+    // shows 000000 after this, the seg RT pointer/device is invalid. If it
+    // shows 00FFFF, the seg RT is reachable and the Emit-time clear/draws
+    // are where the failure lives.
+    HRESULT hrForceClear = E_FAIL;
+    if (m_bSegmentationEnabled && m_pSegmentationSurface)
+    {
+        IDirect3DSurface9* pSaveRT = nullptr;
+        IDirect3DSurface9* pSaveDS = nullptr;
+        pDevice->GetRenderTarget(0, &pSaveRT);
+        pDevice->GetDepthStencilSurface(&pSaveDS);
+        HRESULT hrSet = pDevice->SetRenderTarget(0, m_pSegmentationSurface);
+        pDevice->SetDepthStencilSurface(nullptr);    // no DS needed for a plain colour clear
+        hrForceClear = pDevice->Clear(0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_XRGB(0, 255, 255), 1.0f, 0);
+        pDevice->SetRenderTarget(0, pSaveRT);
+        pDevice->SetDepthStencilSurface(pSaveDS);
+        if (pSaveRT) pSaveRT->Release();
+        if (pSaveDS) pSaveDS->Release();
+        char hrBuf[128];
+        snprintf(hrBuf, sizeof(hrBuf), "[SegDiag] forceClear: SetRT=0x%08X Clear=0x%08X\n",
+                 static_cast<unsigned>(hrSet), static_cast<unsigned>(hrForceClear));
+        OutputDebugStringA(hrBuf);
+        static std::ofstream s_log2("seg_diag.log", std::ios::out | std::ios::app | std::ios::binary);
+        if (s_log2.is_open()) { s_log2 << hrBuf; s_log2.flush(); }
+    }
+
     // Snapshot the seg surface too. captureMultiModalFrame fires from a Lua
     // event that runs AFTER Present, which is already inside frame N+1 — by
     // then the first Emit* of N+1 has cleared the live seg surface and only
