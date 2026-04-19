@@ -42,6 +42,7 @@ CMultiModalCapture::CMultiModalCapture()
       m_pSegmentationSnapshot(nullptr),
       m_pSegDepthStencil(nullptr),
       m_pDepthSurface(nullptr),
+      m_pSegPixelProbeSurface(nullptr),
       m_pDevice(nullptr),
       m_pD3D11Device(nullptr),
       m_pD3D11Context(nullptr),
@@ -204,6 +205,7 @@ void CMultiModalCapture::ReleaseRenderTargets()
     if (m_pSegmentationSnapshot)  { m_pSegmentationSnapshot->Release();  m_pSegmentationSnapshot = nullptr; }
     if (m_pSegDepthStencil)       { m_pSegDepthStencil->Release();       m_pSegDepthStencil = nullptr; }
     if (m_pDepthSurface)          { m_pDepthSurface->Release();          m_pDepthSurface = nullptr; }
+    if (m_pSegPixelProbeSurface)  { m_pSegPixelProbeSurface->Release();  m_pSegPixelProbeSurface = nullptr; }
 }
 
 // HLSL source for the depth visualization pass. Samples the bound INTZ texture
@@ -729,6 +731,80 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
     if (m_pSegmentationSurface && m_pSegmentationSnapshot)
         pDevice->StretchRect(m_pSegmentationSurface, nullptr, m_pSegmentationSnapshot, nullptr, D3DTEXF_NONE);
 
+    // --- Diagnostics ---------------------------------------------------
+    // Log per-frame replay stats + center-pixel sample + RT-size histogram.
+    // Only when seg is armed; otherwise counters are all zero and spam-free.
+    if (m_bSegmentationEnabled && (m_SegStats.emitCalls > 0 || m_SegStats.drawsFired > 0))
+    {
+        // Lazily create a 1x1 sysmem probe surface for center-pixel readback.
+        if (!m_pSegPixelProbeSurface)
+        {
+            pDevice->CreateOffscreenPlainSurface(1, 1, D3DFMT_X8R8G8B8, D3DPOOL_SYSTEMMEM,
+                                                 &m_pSegPixelProbeSurface, nullptr);
+        }
+
+        // Sample a handful of positions from the snapshot to see what's there.
+        uint32_t samples[5] = {0, 0, 0, 0, 0};
+        const int sx[5] = { 10,                     m_iCaptureWidth / 4,
+                            m_iCaptureWidth / 2,    m_iCaptureWidth * 3 / 4,
+                            m_iCaptureWidth - 10 };
+        const int sy = m_iCaptureHeight / 2;
+        if (m_pSegPixelProbeSurface && m_pSegmentationSnapshot)
+        {
+            for (int i = 0; i < 5; ++i)
+            {
+                RECT r = { sx[i], sy, sx[i] + 1, sy + 1 };
+                if (SUCCEEDED(pDevice->StretchRect(m_pSegmentationSnapshot, &r,
+                                                    m_pSegPixelProbeSurface, nullptr, D3DTEXF_NONE)))
+                {
+                    D3DLOCKED_RECT lr;
+                    if (SUCCEEDED(m_pSegPixelProbeSurface->LockRect(&lr, nullptr, D3DLOCK_READONLY)))
+                    {
+                        samples[i] = *reinterpret_cast<uint32_t*>(lr.pBits) & 0x00FFFFFFu;
+                        m_pSegPixelProbeSurface->UnlockRect();
+                    }
+                }
+            }
+        }
+
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+                 "[SegDiag] emit=%d enabled=%d scene=%d res=%d size=%d fired=%d uniqueCols=%zu "
+                 "px@(10,%d)=%06X px@(%d,%d)=%06X px@(%d,%d)=%06X px@(%d,%d)=%06X px@(%d,%d)=%06X\n",
+                 m_SegStats.emitCalls, m_SegStats.passedEnabled, m_SegStats.passedScene,
+                 m_SegStats.passedResources, m_SegStats.passedSizeGate, m_SegStats.drawsFired,
+                 m_SegUniqueColorsThisFrame.size(),
+                 sy, samples[0],
+                 sx[1], sy, samples[1],
+                 sx[2], sy, samples[2],
+                 sx[3], sy, samples[3],
+                 sx[4], sy, samples[4]);
+        OutputDebugStringA(buf);
+
+        // RT-size histogram (top 5 buckets).
+        if (!m_SegRTSizeBucket.empty())
+        {
+            std::vector<std::pair<uint64_t, int>> sorted(m_SegRTSizeBucket.begin(), m_SegRTSizeBucket.end());
+            std::sort(sorted.begin(), sorted.end(),
+                      [](const std::pair<uint64_t, int>& a, const std::pair<uint64_t, int>& b) { return a.second > b.second; });
+            std::string line = "[SegDiag] RTsizes:";
+            for (size_t i = 0; i < sorted.size() && i < 5; ++i)
+            {
+                char b2[64];
+                snprintf(b2, sizeof(b2), " %ux%u=%d",
+                         static_cast<unsigned>(sorted[i].first >> 32),
+                         static_cast<unsigned>(sorted[i].first & 0xFFFFFFFFu),
+                         sorted[i].second);
+                line += b2;
+            }
+            line += "\n";
+            OutputDebugStringA(line.c_str());
+        }
+    }
+    m_SegStats = SSegFrameStats{};
+    m_SegUniqueColorsThisFrame.clear();
+    m_SegRTSizeBucket.clear();
+
     // Next-frame seg clear scheduled after the snapshot is safely made.
     m_bSegSurfaceNeedsClear = true;
 }
@@ -746,7 +822,8 @@ static IDirect3DStateBlock9* SetupSegmentationState(IDirect3DDevice9* pDevice,
                                                     IDirect3DSurface9* pSegSurface,
                                                     IDirect3DSurface9* pSegDS,
                                                     IDirect3DPixelShader9* pConstPS,
-                                                    CTextureRegistry& registry)
+                                                    CTextureRegistry& registry,
+                                                    std::unordered_set<uint32_t>& uniqueColorsOut)
 {
     if (!pDevice || !pSegSurface || !pSegDS || !pConstPS) return nullptr;
 
@@ -781,6 +858,7 @@ static IDirect3DStateBlock9* SetupSegmentationState(IDirect3DDevice9* pDevice,
         key = buf;
     }
     D3DCOLOR color = registry.GetOrAssignColor(key);
+    uniqueColorsOut.insert(static_cast<uint32_t>(color & 0x00FFFFFFu));
 
     const float psConstant[4] = {
         ((color >> 16) & 0xFF) / 255.0f,
@@ -823,6 +901,7 @@ static void EmitSegmentationCommon(IDirect3DDevice9*      pDevice,
                                    IDirect3DPixelShader9* pConstPS,
                                    CTextureRegistry&      registry,
                                    bool&                  needsClearFlag,
+                                   std::unordered_set<uint32_t>& uniqueColorsOut,
                                    DrawFn                 doDraw)
 {
     IDirect3DSurface9* pSavedRT = nullptr;
@@ -830,7 +909,7 @@ static void EmitSegmentationCommon(IDirect3DDevice9*      pDevice,
     pDevice->GetRenderTarget(0, &pSavedRT);
     pDevice->GetDepthStencilSurface(&pSavedDS);
 
-    IDirect3DStateBlock9* pBlock = SetupSegmentationState(pDevice, pSegSurface, pSegDS, pConstPS, registry);
+    IDirect3DStateBlock9* pBlock = SetupSegmentationState(pDevice, pSegSurface, pSegDS, pConstPS, registry, uniqueColorsOut);
     if (!pBlock)
     {
         if (pSavedRT) pSavedRT->Release();
@@ -886,22 +965,48 @@ static bool IsDrawingToFullSizeRT(IDirect3DDevice9* pDevice, UINT expectedW, UIN
     return SUCCEEDED(hr) && desc.Width == expectedW && desc.Height == expectedH;
 }
 
+// Diagnostic helper — records the current RT's dimensions so OnPresent can
+// print a histogram of RT sizes seen during the frame. This tells us whether
+// the world-scene pass is actually hitting a full-size RT or something else.
+static void RecordCurrentRTSize(IDirect3DDevice9* pDevice, std::map<uint64_t, int>& bucket)
+{
+    IDirect3DSurface9* pCurRT = nullptr;
+    if (FAILED(pDevice->GetRenderTarget(0, &pCurRT)) || !pCurRT) return;
+    D3DSURFACE_DESC desc = {};
+    if (SUCCEEDED(pCurRT->GetDesc(&desc)))
+    {
+        uint64_t key = (static_cast<uint64_t>(desc.Width) << 32) | desc.Height;
+        bucket[key]++;
+    }
+    pCurRT->Release();
+}
+
 void CMultiModalCapture::EmitSegmentationDraw(IDirect3DDevice9* pDevice,
                                               unsigned int primitiveType,
                                               unsigned int startVertex,
                                               unsigned int primitiveCount)
 {
+    m_SegStats.emitCalls++;
     if (!m_bSegmentationEnabled) return;
+    m_SegStats.passedEnabled++;
     if (!IsInGtaSceneOnly()) return;
+    m_SegStats.passedScene++;
     if (!pDevice || !m_pSegmentationSurface || !m_pSegDepthStencil || !m_pConstantColorShader) return;
+    m_SegStats.passedResources++;
+
+    RecordCurrentRTSize(pDevice, m_SegRTSizeBucket);
+
     if (!IsDrawingToFullSizeRT(pDevice, static_cast<UINT>(m_iCaptureWidth), static_cast<UINT>(m_iCaptureHeight))) return;
+    m_SegStats.passedSizeGate++;
 
     EmitSegmentationCommon(pDevice, m_pSegmentationSurface, m_pSegDepthStencil,
                            m_pConstantColorShader,
                            m_TextureRegistry, m_bSegSurfaceNeedsClear,
+                           m_SegUniqueColorsThisFrame,
                            [&](IDirect3DDevice9* d) {
         d->DrawPrimitive(static_cast<D3DPRIMITIVETYPE>(primitiveType), startVertex, primitiveCount);
     });
+    m_SegStats.drawsFired++;
 }
 
 void CMultiModalCapture::EmitSegmentationDrawIndexed(IDirect3DDevice9* pDevice,
@@ -912,19 +1017,29 @@ void CMultiModalCapture::EmitSegmentationDrawIndexed(IDirect3DDevice9* pDevice,
                                                      unsigned int startIndex,
                                                      unsigned int primitiveCount)
 {
+    m_SegStats.emitCalls++;
     if (!m_bSegmentationEnabled) return;
+    m_SegStats.passedEnabled++;
     if (!IsInGtaSceneOnly()) return;
+    m_SegStats.passedScene++;
     if (!pDevice || !m_pSegmentationSurface || !m_pSegDepthStencil || !m_pConstantColorShader) return;
+    m_SegStats.passedResources++;
+
+    RecordCurrentRTSize(pDevice, m_SegRTSizeBucket);
+
     if (!IsDrawingToFullSizeRT(pDevice, static_cast<UINT>(m_iCaptureWidth), static_cast<UINT>(m_iCaptureHeight))) return;
+    m_SegStats.passedSizeGate++;
 
     EmitSegmentationCommon(pDevice, m_pSegmentationSurface, m_pSegDepthStencil,
                            m_pConstantColorShader,
                            m_TextureRegistry, m_bSegSurfaceNeedsClear,
+                           m_SegUniqueColorsThisFrame,
                            [&](IDirect3DDevice9* d) {
         d->DrawIndexedPrimitive(static_cast<D3DPRIMITIVETYPE>(primitiveType),
                                 baseVertexIndex, minVertexIndex, numVertices,
                                 startIndex, primitiveCount);
     });
+    m_SegStats.drawsFired++;
 }
 
 bool CMultiModalCapture::WriteMappingJson(const std::string& path) const

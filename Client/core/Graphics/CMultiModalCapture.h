@@ -19,6 +19,9 @@
 #include "CD3D9To11Converter.h"
 #include "CVideoEncoder.h"
 #include "CSaveWorkerPool.h"
+#include <cstdint>
+#include <map>
+#include <unordered_set>
 
 class CMultiModalCapture : public IMultiModalCapture
 {
@@ -91,6 +94,23 @@ private:
 
     bool                    m_bSegmentationEnabled;     // arms the seg double-draw
     bool                    m_bSegSurfaceNeedsClear;    // reset each OnPresent, triggers clear at next first-draw of the new frame
+
+    // Per-frame diagnostics for the segmentation replay path. Reset in
+    // OnPresent after logging. Single-threaded access (render thread only).
+    struct SSegFrameStats
+    {
+        int emitCalls        = 0;    // EmitSegmentationDraw[Indexed] entries
+        int passedEnabled    = 0;    // ... that had m_bSegmentationEnabled true
+        int passedScene      = 0;    // ... that passed IsInGtaSceneOnly
+        int passedResources  = 0;    // ... that had all RTs / shader / DS
+        int passedSizeGate   = 0;    // ... that passed IsDrawingToFullSizeRT
+        int drawsFired       = 0;    // ... that actually ran EmitSegmentationCommon
+        int uniqueColors     = 0;    // unique registry keys fired this frame
+    };
+    SSegFrameStats                     m_SegStats;
+    std::unordered_set<uint32_t>       m_SegUniqueColorsThisFrame;
+    std::map<uint64_t, int>            m_SegRTSizeBucket;           // (w<<32|h) -> count of Emit calls at that size
+    IDirect3DSurface9*                 m_pSegPixelProbeSurface;     // 1x1 sysmem readback for center-pixel sample
 
     // INTZ depth-stencil (Stage 6). INTZ is a FourCC depth format that's
     // simultaneously a depth-stencil target and a sampleable texture, so the
