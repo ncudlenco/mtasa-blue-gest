@@ -732,10 +732,24 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
         pDevice->StretchRect(m_pSegmentationSurface, nullptr, m_pSegmentationSnapshot, nullptr, D3DTEXF_NONE);
 
     // --- Diagnostics ---------------------------------------------------
-    // Log per-frame replay stats + center-pixel sample + RT-size histogram.
+    // Log per-frame replay stats + center-pixel sample + RT-size histogram
+    // to both OutputDebugString (DebugView) and a file at
+    //   <MTA install>/mta/seg_diag.log  (relative path; appended each frame).
+    // Works in release builds, no debugger attached.
     // Only when seg is armed; otherwise counters are all zero and spam-free.
     if (m_bSegmentationEnabled && (m_SegStats.emitCalls > 0 || m_SegStats.drawsFired > 0))
     {
+        static std::ofstream s_segLog;
+        if (!s_segLog.is_open())
+        {
+            // Appendable file in the current working directory. GTA's cwd is
+            // the MTA install / Bin folder when run under mta; easy to locate.
+            s_segLog.open("seg_diag.log", std::ios::out | std::ios::app | std::ios::binary);
+        }
+        auto writeLine = [&](const char* s) {
+            OutputDebugStringA(s);
+            if (s_segLog.is_open()) { s_segLog << s; s_segLog.flush(); }
+        };
         // Lazily create a 1x1 sysmem probe surface for center-pixel readback.
         if (!m_pSegPixelProbeSurface)
         {
@@ -779,7 +793,7 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
                  sx[2], sy, samples[2],
                  sx[3], sy, samples[3],
                  sx[4], sy, samples[4]);
-        OutputDebugStringA(buf);
+        writeLine(buf);
 
         // RT-size histogram (top 5 buckets).
         if (!m_SegRTSizeBucket.empty())
@@ -798,7 +812,7 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
                 line += b2;
             }
             line += "\n";
-            OutputDebugStringA(line.c_str());
+            writeLine(line.c_str());
         }
     }
     m_SegStats = SSegFrameStats{};
