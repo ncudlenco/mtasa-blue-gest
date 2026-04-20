@@ -171,6 +171,11 @@ bool CMultiModalCapture::Initialize(IDirect3DDevice9* pDevice, int width, int he
 void CMultiModalCapture::Shutdown()
 {
     SegDiagLog(m_bDiagLogsEnabled, "[Seg/Shutdown] enter init=%d\n", m_bInitialized ? 1 : 0);
+
+    // Drain any outstanding fire-and-forget saves first so their worker
+    // tasks are done BEFORE we tear down the pool / workers.
+    WaitPendingCaptures();
+
     // Stop encoders first; Stop() is idempotent.
     m_RGBVideoEncoder.Stop();
     m_SegmentationVideoEncoder.Stop();
@@ -592,7 +597,11 @@ bool CMultiModalCapture::StopVideoRecording(int modalityId)
     return pEnc->Stop();
 }
 
-bool CMultiModalCapture::ReadbackToSysMem(IDirect3DSurface9* pRTSurface, SReadbackSurface& out) const
+// Snapshots an RT into a heap-owned byte buffer. All D3D9 resources are
+// released before the function returns, so the caller (and downstream worker
+// threads) only see a std::vector<uint8_t> + pitch + dims. Mirrors
+// CScreenGrabber::GetBackBufferPixels -> ReadPixels flow.
+bool CMultiModalCapture::ReadbackToHeap(IDirect3DSurface9* pRTSurface, SReadbackBuffer& out) const
 {
     if (!pRTSurface || !m_pDevice) return false;
 
@@ -611,25 +620,59 @@ bool CMultiModalCapture::ReadbackToSysMem(IDirect3DSurface9* pRTSurface, SReadba
     hr = pSysMem->LockRect(&locked, nullptr, D3DLOCK_READONLY);
     if (FAILED(hr)) { pSysMem->Release(); return false; }
 
-    out.pSurface    = pSysMem;
-    out.lockedBits  = static_cast<const uint8_t*>(locked.pBits);
-    out.lockedPitch = locked.Pitch;
-    out.width       = desc.Width;
-    out.height      = desc.Height;
+    // Copy row-by-row (respecting the driver's pitch) into a tight buffer
+    // sized to (pitch * height). Downstream code already uses pitch on read,
+    // so we keep the stride as-is rather than repacking to width*bpp.
+    out.pitch  = locked.Pitch;
+    out.width  = desc.Width;
+    out.height = desc.Height;
+    out.pixels.assign(static_cast<const uint8_t*>(locked.pBits),
+                      static_cast<const uint8_t*>(locked.pBits) +
+                          static_cast<size_t>(locked.Pitch) * desc.Height);
+
+    pSysMem->UnlockRect();
+    pSysMem->Release();
     return true;
 }
 
-void CMultiModalCapture::ReleaseReadback(SReadbackSurface& s) const
+void CMultiModalCapture::DrainCompletedSaves()
 {
-    if (s.pSurface)
+    std::lock_guard<std::mutex> lock(m_PendingMutex);
+    // Pop any futures whose tasks are already done (no blocking).
+    while (!m_PendingSaves.empty())
     {
-        s.pSurface->UnlockRect();
-        s.pSurface->Release();
-        s.pSurface = nullptr;
+        auto status = m_PendingSaves.front().wait_for(std::chrono::seconds(0));
+        if (status != std::future_status::ready) break;
+        m_PendingSaves.pop_front();
     }
-    s.lockedBits  = nullptr;
-    s.lockedPitch = 0;
-    s.width = s.height = 0;
+}
+
+void CMultiModalCapture::ApplyBackPressure()
+{
+    // Called before submitting a new batch. If the queue is at capacity,
+    // block until the oldest future finishes — keeps heap usage bounded.
+    std::unique_lock<std::mutex> lock(m_PendingMutex);
+    while (m_PendingSaves.size() >= kMaxPendingSaves)
+    {
+        std::future<void> f = std::move(m_PendingSaves.front());
+        m_PendingSaves.pop_front();
+        lock.unlock();
+        f.wait();
+        lock.lock();
+    }
+}
+
+void CMultiModalCapture::WaitPendingCaptures()
+{
+    // Drain everything. Callers use this at session end.
+    std::deque<std::future<void>> toWait;
+    {
+        std::lock_guard<std::mutex> lock(m_PendingMutex);
+        toWait.swap(m_PendingSaves);
+    }
+    SegDiagLog(m_bDiagLogsEnabled, "[Seg/Wait] draining %zu pending saves\n", toWait.size());
+    for (auto& f : toWait) f.wait();
+    SegDiagLog(m_bDiagLogsEnabled, "[Seg/Wait] done\n");
 }
 
 bool CMultiModalCapture::CaptureMultiModalFrame(const std::string& rgbPath,
@@ -695,32 +738,33 @@ bool CMultiModalCapture::CaptureMultiModalFrame(const std::string& rgbPath,
         }
     }
 
-    // --- 3. Readback the three modalities to sysmem on the main thread
-    //        (D3D9 readback must happen on the device thread). ---
-    SReadbackSurface rgbRead{}, segRead{}, depthRead{};
+    // --- 3. Readback the three modalities to heap-owning buffers on the
+    //        render thread (D3D9 readback must happen on the device thread).
+    //        This is the only synchronous work the caller pays for. All
+    //        further encoding + file I/O runs on the worker pool.
+    SReadbackBuffer rgbRead, segRead, depthRead;
     bool readbackOk = true;
     if (!rgbPath.empty())
     {
-        bool ok = ReadbackToSysMem(m_pRGBSurface, rgbRead);
+        bool ok = ReadbackToHeap(m_pRGBSurface, rgbRead);
         readbackOk = ok && readbackOk;
-        SegDiagLog(m_bDiagLogsEnabled, "[Seg/Capture] readback RGB ok=%d pitch=%d %ux%u bits=%p\n",
-                   ok ? 1 : 0, rgbRead.lockedPitch, rgbRead.width, rgbRead.height,
-                   static_cast<const void*>(rgbRead.lockedBits));
+        SegDiagLog(m_bDiagLogsEnabled, "[Seg/Capture] readback RGB ok=%d pitch=%d %ux%u bytes=%zu\n",
+                   ok ? 1 : 0, rgbRead.pitch, rgbRead.width, rgbRead.height, rgbRead.pixels.size());
     }
     // Read the seg SNAPSHOT, not the live surface — the live one is already
     // being overwritten by the current frame's draws by the time we get here.
     if (!segPath.empty())
     {
-        bool ok = ReadbackToSysMem(m_pSegmentationSnapshot, segRead);
+        bool ok = ReadbackToHeap(m_pSegmentationSnapshot, segRead);
         readbackOk = ok && readbackOk;
         // Sample a few pixels from the locked sysmem surface to see what we're
         // actually about to save — this is valid because the readback surface
         // IS a locked sysmem surface, unlike the earlier (broken) probe.
         uint32_t px0 = 0, pxMid = 0, pxLast = 0;
-        if (ok && segRead.lockedBits && segRead.width > 0 && segRead.height > 0)
+        if (ok && segRead.valid())
         {
             auto readPx = [&](UINT x, UINT y) -> uint32_t {
-                const uint8_t* row = segRead.lockedBits + static_cast<size_t>(y) * segRead.lockedPitch;
+                const uint8_t* row = segRead.pixels.data() + static_cast<size_t>(y) * segRead.pitch;
                 return *reinterpret_cast<const uint32_t*>(row + static_cast<size_t>(x) * 4) & 0x00FFFFFFu;
             };
             px0    = readPx(10, segRead.height / 2);
@@ -729,51 +773,32 @@ bool CMultiModalCapture::CaptureMultiModalFrame(const std::string& rgbPath,
         }
         SegDiagLog(m_bDiagLogsEnabled,
                    "[Seg/Capture] readback Seg ok=%d pitch=%d %ux%u  px@mid-row: %06X %06X %06X\n",
-                   ok ? 1 : 0, segRead.lockedPitch, segRead.width, segRead.height,
+                   ok ? 1 : 0, segRead.pitch, segRead.width, segRead.height,
                    px0, pxMid, pxLast);
     }
     if (!depthPath.empty())
     {
-        bool ok = ReadbackToSysMem(m_pDepthSurface, depthRead);
+        bool ok = ReadbackToHeap(m_pDepthSurface, depthRead);
         readbackOk = ok && readbackOk;
         SegDiagLog(m_bDiagLogsEnabled, "[Seg/Capture] readback Depth ok=%d pitch=%d %ux%u\n",
-                   ok ? 1 : 0, depthRead.lockedPitch, depthRead.width, depthRead.height);
+                   ok ? 1 : 0, depthRead.pitch, depthRead.width, depthRead.height);
     }
 
     if (!readbackOk)
     {
         SegDiagLog(m_bDiagLogsEnabled, "[Seg/Capture] ABORT readback failure\n");
-        ReleaseReadback(rgbRead);
-        ReleaseReadback(segRead);
-        ReleaseReadback(depthRead);
         return false;
     }
 
-    // --- 4. Dispatch encode+write tasks to the worker pool. ---
-    std::vector<std::future<void>> futures;
-    std::atomic<int>               failures{0};
+    // --- 4. Drain any completed saves (non-blocking) and apply back-pressure
+    //        if the in-flight queue is at capacity. ---
+    DrainCompletedSaves();
+    ApplyBackPressure();
 
-    auto submitSave = [&](const SReadbackSurface& rb, const std::string& path, bool indexed, bool jpeg)
-    {
-        if (path.empty() || !rb.lockedBits) return;
-
-        futures.push_back(m_pSaveWorkerPool->Submit([&failures, rb, path, indexed, jpeg, jpegQuality]()
-        {
-            bool ok;
-            if (jpeg)
-                ok = ModalityImageWriter::SaveJPEG(path, rb.lockedBits, rb.width, rb.height, rb.lockedPitch, jpegQuality);
-            else if (indexed)
-                ok = ModalityImageWriter::SaveIndexedPNG(path, rb.lockedBits, rb.width, rb.height, rb.lockedPitch);
-            else
-                ok = ModalityImageWriter::SavePNG(path, rb.lockedBits, rb.width, rb.height, rb.lockedPitch);
-
-            if (!ok)
-                failures.fetch_add(1, std::memory_order_relaxed);
-        }));
-    };
-
-    // RGB: path extension decides PNG vs JPEG. Keep it simple — if the path
-    // ends with ".jpg"/".jpeg" use JPEG, otherwise PNG.
+    // --- 5. Submit save tasks — FIRE AND FORGET. Workers now own the heap
+    //        buffers (moved into the lambdas); the render thread returns
+    //        immediately after this section. WaitPendingCaptures() on shutdown
+    //        drains the queue. ---
     auto isJpegPath = [](const std::string& p) -> bool
     {
         if (p.size() < 4) return false;
@@ -783,27 +808,43 @@ bool CMultiModalCapture::CaptureMultiModalFrame(const std::string& rgbPath,
                                       (lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".jpeg") == 0));
     };
 
-    submitSave(rgbRead,   rgbPath,   /*indexed=*/false, /*jpeg=*/isJpegPath(rgbPath));
-    submitSave(segRead,   segPath,   /*indexed=*/true,  /*jpeg=*/false);            // seg is always 8bpp PNG
-    submitSave(depthRead, depthPath, /*indexed=*/false, /*jpeg=*/isJpegPath(depthPath));
+    // shared_ptr-wrap the move-only buffer so the lambda is copyable, which
+    // CSaveWorkerPool::Submit (std::function<void()>) requires.
+    auto submitSave = [this](SReadbackBuffer&& rb, std::string path, bool indexed, bool jpeg, int q)
+    {
+        if (path.empty() || !rb.valid()) return;
+        auto shared = std::make_shared<SReadbackBuffer>(std::move(rb));
+        auto fut = m_pSaveWorkerPool->Submit(
+            [shared, path = std::move(path), indexed, jpeg, q]()
+            {
+                bool ok;
+                if (jpeg)
+                    ok = ModalityImageWriter::SaveJPEG(path, shared->pixels.data(), shared->width, shared->height, shared->pitch, q);
+                else if (indexed)
+                    ok = ModalityImageWriter::SaveIndexedPNG(path, shared->pixels.data(), shared->width, shared->height, shared->pitch);
+                else
+                    ok = ModalityImageWriter::SavePNG(path, shared->pixels.data(), shared->width, shared->height, shared->pitch);
+                (void)ok;   // failures surface as missing files on disk
+            });
+        std::lock_guard<std::mutex> lock(m_PendingMutex);
+        m_PendingSaves.push_back(std::move(fut));
+    };
 
-    // --- 5. Block until all workers finish. ---
-    for (std::future<void>& f : futures)
-        f.wait();
+    submitSave(std::move(rgbRead),   rgbPath,   /*indexed=*/false, isJpegPath(rgbPath),   jpegQuality);
+    submitSave(std::move(segRead),   segPath,   /*indexed=*/true,  /*jpeg=*/false,        jpegQuality);
+    submitSave(std::move(depthRead), depthPath, /*indexed=*/false, isJpegPath(depthPath), jpegQuality);
 
-    // --- 6. Release locked sysmem surfaces on the main thread. ---
-    ReleaseReadback(rgbRead);
-    ReleaseReadback(segRead);
-    ReleaseReadback(depthRead);
-
-    const int nFail = failures.load(std::memory_order_relaxed);
     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                          std::chrono::steady_clock::now() - t0).count();
+    size_t nPending = 0;
+    { std::lock_guard<std::mutex> lock(m_PendingMutex); nPending = m_PendingSaves.size(); }
     SegDiagLog(m_bDiagLogsEnabled,
-               "[Seg/Capture] DONE frame=%llu failures=%d elapsedMs=%lld\n",
-               static_cast<unsigned long long>(m_FrameIndex), nFail,
-               static_cast<long long>(elapsedMs));
-    return nFail == 0;
+               "[Seg/Capture] DONE(queued) frame=%llu elapsedMs=%lld pending=%zu\n",
+               static_cast<unsigned long long>(m_FrameIndex),
+               static_cast<long long>(elapsedMs), nPending);
+    // Success signal is now "the work was accepted onto the queue". Callers
+    // that need disk-presence confirmation must call waitMultiModalPending().
+    return true;
 }
 
 void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)

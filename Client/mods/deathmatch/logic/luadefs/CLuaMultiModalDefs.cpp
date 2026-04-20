@@ -24,6 +24,7 @@ void CLuaMultiModalDefs::LoadFunctions()
         {"setMultiModalSegmentation", SetMultiModalSegmentation},
         {"setCleanCaptureMode",       SetCleanCaptureMode},
         {"enableCaptureLogs",         EnableCaptureLogs},
+        {"waitMultiModalPending",     WaitMultiModalPending},
     };
 
     for (const auto& [name, func] : functions)
@@ -230,6 +231,27 @@ int CLuaMultiModalDefs::EnableCaptureLogs(lua_State* luaVM)
     }
     const bool enable = lua_toboolean(luaVM, 1) != 0;
     pCapture->SetDiagLogsEnabled(enable);
+    lua_pushboolean(luaVM, true);
+    return 1;
+}
+
+//
+// waitMultiModalPending()
+//   -> boolean (true on success)
+//
+// Blocks until all previously-submitted fire-and-forget captureMultiModalFrame
+// save tasks have finished writing to disk. Call at session end (stopCollection)
+// so MP4 / PNG files are flushed before sv2l tears down the output tree.
+//
+int CLuaMultiModalDefs::WaitMultiModalPending(lua_State* luaVM)
+{
+    IMultiModalCapture* pCapture = GetMultiModalCapturePtr();
+    if (!pCapture)
+    {
+        lua_pushboolean(luaVM, false);
+        return 1;
+    }
+    pCapture->WaitPendingCaptures();
     lua_pushboolean(luaVM, true);
     return 1;
 }

@@ -104,4 +104,10 @@ public:
     // per-draw trace) to seg_diag.log. Default off — enabled via the Lua
     // binding enableCaptureLogs(bool).
     virtual void SetDiagLogsEnabled(bool enabled) = 0;
+
+    // Block the calling thread until all previously-submitted async save
+    // tasks (from fire-and-forget captureMultiModalFrame calls) complete.
+    // Intended for session-end teardown so MP4 / PNG files are flushed to
+    // disk before sv2l tears down the capture window.
+    virtual void WaitPendingCaptures() = 0;
 };

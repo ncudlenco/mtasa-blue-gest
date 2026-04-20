@@ -23,4 +23,5 @@ public:
     LUA_DECLARE(SetMultiModalSegmentation);
     LUA_DECLARE(SetCleanCaptureMode);
     LUA_DECLARE(EnableCaptureLogs);
+    LUA_DECLARE(WaitMultiModalPending);
 };

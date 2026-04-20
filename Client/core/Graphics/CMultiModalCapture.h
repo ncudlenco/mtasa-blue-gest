@@ -20,8 +20,12 @@
 #include "CVideoEncoder.h"
 #include "CSaveWorkerPool.h"
 #include <cstdint>
+#include <deque>
+#include <future>
 #include <map>
+#include <mutex>
 #include <unordered_set>
+#include <vector>
 
 class CMultiModalCapture : public IMultiModalCapture
 {
@@ -57,6 +61,8 @@ public:
     bool IsSegmentationEnabled() const override { return m_bSegmentationEnabled; }
 
     void SetDiagLogsEnabled(bool enabled) override { m_bDiagLogsEnabled = enabled; }
+
+    void WaitPendingCaptures() override;
 
     void EmitSegmentationDraw(IDirect3DDevice9* pDevice,
                               unsigned int primitiveType,
@@ -147,18 +153,29 @@ private:
 
     CVideoEncoder* EncoderForModality(int modalityId);
 
-    // Readback + worker dispatch for one modality. Returns the future that
-    // the caller must wait on before releasing the locked sysmem surface.
-    struct SReadbackSurface
+    // Owning heap copy of one readback. Pattern mirrors CScreenGrabber:
+    // readback (RT -> SYSTEMMEM) + memcpy into heap happens on the render
+    // thread (D3D9 requires it); the heap buffer is then handed to a worker
+    // so the render thread never waits on encode/write. No D3D9 resources
+    // survive the ReadbackToHeap call.
+    struct SReadbackBuffer
     {
-        IDirect3DSurface9* pSurface     = nullptr;      // D3DPOOL_SYSTEMMEM, caller owns
-        int                lockedPitch  = 0;
-        const uint8_t*     lockedBits   = nullptr;
-        UINT               width        = 0;
-        UINT               height       = 0;
+        std::vector<uint8_t> pixels;        // tightly-packed BGRX bytes
+        int                  pitch  = 0;    // stride in bytes (row alignment)
+        UINT                 width  = 0;
+        UINT                 height = 0;
+        bool                 valid() const { return !pixels.empty() && pitch > 0; }
     };
-    bool                ReadbackToSysMem(IDirect3DSurface9* pRTSurface, SReadbackSurface& out) const;
-    void                ReleaseReadback(SReadbackSurface& s) const;
+    bool                ReadbackToHeap(IDirect3DSurface9* pRTSurface, SReadbackBuffer& out) const;
+
+    // In-flight save tasks. Owned here so the capture can drain them at
+    // session end via WaitPendingCaptures (also gets back-pressure so the
+    // queue doesn't grow unbounded under sustained load).
+    std::mutex                         m_PendingMutex;
+    std::deque<std::future<void>>      m_PendingSaves;
+    static constexpr size_t            kMaxPendingSaves = 32;
+    void                DrainCompletedSaves();     // non-blocking cleanup
+    void                ApplyBackPressure();       // blocks if queue full
 
     ID3D11Texture2D*    ConvertD3D9ToD3D11(IDirect3DSurface9* pSurface);
 };
