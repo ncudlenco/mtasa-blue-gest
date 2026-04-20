@@ -23,6 +23,7 @@ void CLuaMultiModalDefs::LoadFunctions()
         {"writeMultiModalMapping",    WriteMultiModalMapping},
         {"setMultiModalSegmentation", SetMultiModalSegmentation},
         {"setCleanCaptureMode",       SetCleanCaptureMode},
+        {"enableCaptureLogs",         EnableCaptureLogs},
     };
 
     for (const auto& [name, func] : functions)
@@ -207,5 +208,28 @@ int CLuaMultiModalDefs::SetCleanCaptureMode(lua_State* luaVM)
     pGraphics->SetCleanCaptureMode(enable);
 
     lua_pushboolean(luaVM, wasEnabled);
+    return 1;
+}
+
+//
+// enableCaptureLogs(boolean)
+//   -> boolean (true on success, false if the capture instance isn't ready)
+//
+// Toggles all [SegDiag] / [SegDraw] logging — per-frame counters, RT-size
+// histogram, and the first-N-draws-per-frame detailed trace — to
+// OutputDebugString plus the seg_diag.log file in the process's CWD.
+// Default off; call once at startup to turn it on for a capture session.
+//
+int CLuaMultiModalDefs::EnableCaptureLogs(lua_State* luaVM)
+{
+    IMultiModalCapture* pCapture = GetMultiModalCapturePtr();
+    if (!pCapture)
+    {
+        lua_pushboolean(luaVM, false);
+        return 1;
+    }
+    const bool enable = lua_toboolean(luaVM, 1) != 0;
+    pCapture->SetDiagLogsEnabled(enable);
+    lua_pushboolean(luaVM, true);
     return 1;
 }

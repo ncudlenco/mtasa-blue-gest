@@ -56,6 +56,8 @@ public:
     void SetSegmentationEnabled(bool enabled) override;
     bool IsSegmentationEnabled() const override { return m_bSegmentationEnabled; }
 
+    void SetDiagLogsEnabled(bool enabled) override { m_bDiagLogsEnabled = enabled; }
+
     void EmitSegmentationDraw(IDirect3DDevice9* pDevice,
                               unsigned int primitiveType,
                               unsigned int startVertex,
@@ -110,6 +112,8 @@ private:
     SSegFrameStats                     m_SegStats;
     std::unordered_set<uint32_t>       m_SegUniqueColorsThisFrame;
     std::map<uint64_t, int>            m_SegRTSizeBucket;           // (w<<32|h) -> count of Emit calls at that size
+    bool                               m_bDiagLogsEnabled;          // gate for all [SegDiag] output + per-draw trace
+    int                                m_SegPerDrawTraceRemaining;  // decremented per logged draw; reset in OnPresent
 
     // INTZ depth-stencil (Stage 6). INTZ is a FourCC depth format that's
     // simultaneously a depth-stencil target and a sampleable texture, so the

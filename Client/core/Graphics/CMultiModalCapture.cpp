@@ -57,7 +57,9 @@ CMultiModalCapture::CMultiModalCapture()
       m_bIntzInstalled(false),
       m_bInitialized(false),
       m_iCaptureWidth(0),
-      m_iCaptureHeight(0)
+      m_iCaptureHeight(0),
+      m_bDiagLogsEnabled(false),
+      m_SegPerDrawTraceRemaining(0)
 {
 }
 
@@ -730,12 +732,10 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
         pDevice->StretchRect(m_pSegmentationSurface, nullptr, m_pSegmentationSnapshot, nullptr, D3DTEXF_NONE);
 
     // --- Diagnostics ---------------------------------------------------
-    // Log per-frame replay stats + center-pixel sample + RT-size histogram
-    // to both OutputDebugString (DebugView) and a file at
-    //   <MTA install>/mta/seg_diag.log  (relative path; appended each frame).
-    // Works in release builds, no debugger attached.
-    // Only when seg is armed; otherwise counters are all zero and spam-free.
-    if (m_bSegmentationEnabled && (m_SegStats.emitCalls > 0 || m_SegStats.drawsFired > 0))
+    // Gated by Lua-settable flag (enableCaptureLogs(bool)). When on we write
+    // to both OutputDebugString and seg_diag.log in the process CWD.
+    if (m_bDiagLogsEnabled && m_bSegmentationEnabled &&
+        (m_SegStats.emitCalls > 0 || m_SegStats.drawsFired > 0))
     {
         static std::ofstream s_segLog;
         if (!s_segLog.is_open())
@@ -784,6 +784,10 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
     m_SegStats = SSegFrameStats{};
     m_SegUniqueColorsThisFrame.clear();
     m_SegRTSizeBucket.clear();
+    // Arm the per-draw trace for up to 10 passing draws of the next frame
+    // whenever logs are enabled. Cheap enough to do every frame; callers
+    // opt in/out via enableCaptureLogs(bool).
+    m_SegPerDrawTraceRemaining = m_bDiagLogsEnabled ? 10 : 0;
 
     // Next-frame seg clear scheduled after the snapshot is safely made.
     m_bSegSurfaceNeedsClear = true;
@@ -964,6 +968,54 @@ static void RecordCurrentRTSize(IDirect3DDevice9* pDevice, std::map<uint64_t, in
     pCurRT->Release();
 }
 
+// Per-draw diagnostic line. Gathers enough state to reason about whether a
+// draw is legitimate world geometry or a post-FX fullscreen quad / MTA
+// internal / raw-D3D texture leaking through. Called for the first N passing
+// draws of each frame when diag logs are armed.
+static void TraceDrawDetails(const char* tag, IDirect3DDevice9* pDevice,
+                             unsigned int primType, unsigned int primCount)
+{
+    // Stage-0 texture name via RenderWare map (empty = not a world texture).
+    const char* texName = "";
+    IDirect3DBaseTexture9* pTex = g_pDeviceState ? g_pDeviceState->TextureState[0].Texture : nullptr;
+    CGame* pGame = CCore::GetSingletonPtr() ? CCore::GetSingletonPtr()->GetGame() : nullptr;
+    CRenderWare* pRW = pGame ? pGame->GetRenderWare() : nullptr;
+    if (pRW && pTex)
+    {
+        const char* n = pRW->GetTextureName(reinterpret_cast<CD3DDUMMY*>(static_cast<void*>(pTex)));
+        if (n) texName = n;
+    }
+
+    // RT size at this draw.
+    UINT rtW = 0, rtH = 0;
+    IDirect3DSurface9* pCurRT = nullptr;
+    if (SUCCEEDED(pDevice->GetRenderTarget(0, &pCurRT)) && pCurRT)
+    {
+        D3DSURFACE_DESC d = {};
+        if (SUCCEEDED(pCurRT->GetDesc(&d))) { rtW = d.Width; rtH = d.Height; }
+        pCurRT->Release();
+    }
+
+    // Game's current depth-test state and viewport.
+    DWORD zEnable = 0, zWrite = 0;
+    pDevice->GetRenderState(D3DRS_ZENABLE, &zEnable);
+    pDevice->GetRenderState(D3DRS_ZWRITEENABLE, &zWrite);
+    D3DVIEWPORT9 vp = {};
+    pDevice->GetViewport(&vp);
+
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+             "[SegDraw] %s tex='%s' prim=%u cnt=%u rt=%ux%u "
+             "vp=%u,%u %ux%u z=%.2f..%.2f ZE=%lu ZW=%lu texptr=0x%p\n",
+             tag, texName, primType, primCount, rtW, rtH,
+             vp.X, vp.Y, vp.Width, vp.Height, vp.MinZ, vp.MaxZ,
+             static_cast<unsigned long>(zEnable), static_cast<unsigned long>(zWrite),
+             static_cast<void*>(pTex));
+    OutputDebugStringA(buf);
+    static std::ofstream s_drawLog("seg_diag.log", std::ios::out | std::ios::app | std::ios::binary);
+    if (s_drawLog.is_open()) { s_drawLog << buf; s_drawLog.flush(); }
+}
+
 void CMultiModalCapture::EmitSegmentationDraw(IDirect3DDevice9* pDevice,
                                               unsigned int primitiveType,
                                               unsigned int startVertex,
@@ -981,6 +1033,12 @@ void CMultiModalCapture::EmitSegmentationDraw(IDirect3DDevice9* pDevice,
 
     if (!IsDrawingToFullSizeRT(pDevice, static_cast<UINT>(m_iCaptureWidth), static_cast<UINT>(m_iCaptureHeight))) return;
     m_SegStats.passedSizeGate++;
+
+    if (m_bDiagLogsEnabled && m_SegPerDrawTraceRemaining > 0)
+    {
+        TraceDrawDetails("DP ", pDevice, primitiveType, primitiveCount);
+        m_SegPerDrawTraceRemaining--;
+    }
 
     EmitSegmentationCommon(pDevice, m_pSegmentationSurface, m_pSegDepthStencil,
                            m_pConstantColorShader,
@@ -1012,6 +1070,12 @@ void CMultiModalCapture::EmitSegmentationDrawIndexed(IDirect3DDevice9* pDevice,
 
     if (!IsDrawingToFullSizeRT(pDevice, static_cast<UINT>(m_iCaptureWidth), static_cast<UINT>(m_iCaptureHeight))) return;
     m_SegStats.passedSizeGate++;
+
+    if (m_bDiagLogsEnabled && m_SegPerDrawTraceRemaining > 0)
+    {
+        TraceDrawDetails("DIP", pDevice, primitiveType, primitiveCount);
+        m_SegPerDrawTraceRemaining--;
+    }
 
     EmitSegmentationCommon(pDevice, m_pSegmentationSurface, m_pSegDepthStencil,
                            m_pConstantColorShader,

@@ -99,4 +99,9 @@ public:
                                              unsigned int numVertices,
                                              unsigned int startIndex,
                                              unsigned int primitiveCount) = 0;
+
+    // Toggles all [SegDiag] output (per-frame counters, RT-size histogram,
+    // per-draw trace) to seg_diag.log. Default off — enabled via the Lua
+    // binding enableCaptureLogs(bool).
+    virtual void SetDiagLogsEnabled(bool enabled) = 0;
 };

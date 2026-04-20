@@ -22,4 +22,5 @@ public:
     LUA_DECLARE(WriteMultiModalMapping);
     LUA_DECLARE(SetMultiModalSegmentation);
     LUA_DECLARE(SetCleanCaptureMode);
+    LUA_DECLARE(EnableCaptureLogs);
 };
