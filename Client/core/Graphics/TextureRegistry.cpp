@@ -67,27 +67,39 @@ void CTextureRegistry::HSVtoRGB(float h, float s, float v, BYTE& r, BYTE& g, BYT
 
     if (h6 < 1.0f)
     {
-        r1 = c; g1 = x; b1 = 0;
+        r1 = c;
+        g1 = x;
+        b1 = 0;
     }
     else if (h6 < 2.0f)
     {
-        r1 = x; g1 = c; b1 = 0;
+        r1 = x;
+        g1 = c;
+        b1 = 0;
     }
     else if (h6 < 3.0f)
     {
-        r1 = 0; g1 = c; b1 = x;
+        r1 = 0;
+        g1 = c;
+        b1 = x;
     }
     else if (h6 < 4.0f)
     {
-        r1 = 0; g1 = x; b1 = c;
+        r1 = 0;
+        g1 = x;
+        b1 = c;
     }
     else if (h6 < 5.0f)
     {
-        r1 = x; g1 = 0; b1 = c;
+        r1 = x;
+        g1 = 0;
+        b1 = c;
     }
     else
     {
-        r1 = c; g1 = 0; b1 = x;
+        r1 = c;
+        g1 = 0;
+        b1 = x;
     }
 
     r = static_cast<BYTE>((r1 + m) * 255.0f);
@@ -110,7 +122,7 @@ bool CTextureRegistry::ExportMapping(const std::string& jsonPath)
     for (const auto& pair : m_TextureColors)
     {
         const std::string& texName = pair.first;
-        D3DCOLOR color = pair.second;
+        D3DCOLOR           color = pair.second;
 
         BYTE r = (color >> 16) & 0xFF;
         BYTE g = (color >> 8) & 0xFF;

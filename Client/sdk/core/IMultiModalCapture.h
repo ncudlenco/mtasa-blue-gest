@@ -25,9 +25,9 @@ struct IDirect3DDevice9;
 // values are part of the ABI that Lua scripts depend on — do not renumber.
 enum class EModality : int
 {
-    RGB          = 0,
+    RGB = 0,
     SEGMENTATION = 1,
-    DEPTH        = 2,
+    DEPTH = 2,
 };
 
 class IMultiModalCapture
@@ -47,23 +47,13 @@ public:
     // Blocks until every requested artifact is on disk. Returns false if
     // initialization is bad or any individual save fails; best-effort for the
     // rest (partial outputs are still written).
-    virtual bool CaptureMultiModalFrame(const std::string& rgbPath,
-                                        const std::string& segPath,
-                                        const std::string& depthPath,
-                                        bool saveRgbToVideo,
-                                        bool saveSegToVideo,
-                                        bool saveDepthToVideo,
-                                        int  jpegQuality) = 0;
+    virtual bool CaptureMultiModalFrame(const std::string& rgbPath, const std::string& segPath, const std::string& depthPath, bool saveRgbToVideo,
+                                        bool saveSegToVideo, bool saveDepthToVideo, int jpegQuality) = 0;
 
     // Persistent per-modality H.264 encoder. captureMultiModalFrame() feeds
     // the encoder when its corresponding saveXxxToVideo flag is true and the
     // encoder is running.
-    virtual bool StartVideoRecording(int                modalityId,
-                                     const std::string& videoPath,
-                                     int                width,
-                                     int                height,
-                                     int                fps,
-                                     int                bitrate) = 0;
+    virtual bool StartVideoRecording(int modalityId, const std::string& videoPath, int width, int height, int fps, int bitrate) = 0;
 
     virtual bool StopVideoRecording(int modalityId) = 0;
 
@@ -83,22 +73,14 @@ public:
     // keyed by the current sampler-0 texture pointer. Takes effect from the
     // next rendered frame. Disabled by default — cost is ~1-3 ms/frame when on.
     virtual void SetSegmentationEnabled(bool enabled) = 0;
-    virtual bool IsSegmentationEnabled() const        = 0;
+    virtual bool IsSegmentationEnabled() const = 0;
 
     // Called by the proxy device's DrawPrimitiveGuarded hooks. Fast-paths to
     // no-op when segmentation is disabled. pDevice is the RAW device the
     // proxy forwards to, not the proxy itself.
-    virtual void EmitSegmentationDraw(IDirect3DDevice9* pDevice,
-                                      unsigned int primitiveType,
-                                      unsigned int startVertex,
-                                      unsigned int primitiveCount) = 0;
-    virtual void EmitSegmentationDrawIndexed(IDirect3DDevice9* pDevice,
-                                             unsigned int primitiveType,
-                                             int          baseVertexIndex,
-                                             unsigned int minVertexIndex,
-                                             unsigned int numVertices,
-                                             unsigned int startIndex,
-                                             unsigned int primitiveCount) = 0;
+    virtual void EmitSegmentationDraw(IDirect3DDevice9* pDevice, unsigned int primitiveType, unsigned int startVertex, unsigned int primitiveCount) = 0;
+    virtual void EmitSegmentationDrawIndexed(IDirect3DDevice9* pDevice, unsigned int primitiveType, int baseVertexIndex, unsigned int minVertexIndex,
+                                             unsigned int numVertices, unsigned int startIndex, unsigned int primitiveCount) = 0;
 
     // Toggles all [SegDiag] output (per-frame counters, RT-size histogram,
     // per-draw trace) to seg_diag.log. Default off — enabled via the Lua

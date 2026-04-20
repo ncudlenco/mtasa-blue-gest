@@ -49,15 +49,15 @@ public:
     bool IsInitialized() const { return m_bInitialized; }
 
 private:
-    IDirect3DDevice9*       m_pD3D9Device;
-    ID3D11Device*           m_pD3D11Device;
-    ID3D11DeviceContext*    m_pD3D11Context;
-    bool                    m_bInitialized;
+    IDirect3DDevice9*    m_pD3D9Device;
+    ID3D11Device*        m_pD3D11Device;
+    ID3D11DeviceContext* m_pD3D11Context;
+    bool                 m_bInitialized;
 
     // Cached staging surface (reused for conversions)
-    IDirect3DSurface9*      m_pStagingSurface;
-    int                     m_iStagingWidth;
-    int                     m_iStagingHeight;
+    IDirect3DSurface9* m_pStagingSurface;
+    int                m_iStagingWidth;
+    int                m_iStagingHeight;
 
     // Helper: Create or resize staging surface
     bool EnsureStagingSurface(int width, int height);

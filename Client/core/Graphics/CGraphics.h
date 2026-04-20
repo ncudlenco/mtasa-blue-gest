@@ -177,7 +177,7 @@ public:
     void SetCleanCaptureMode(bool bEnabled) override { m_bCleanCaptureMode.store(bEnabled, std::memory_order_release); }
     bool IsCleanCaptureMode() const override { return m_bCleanCaptureMode.load(std::memory_order_acquire); }
 
-    void                         RetryInvalidRenderTargets()
+    void RetryInvalidRenderTargets()
     {
         if (m_pRenderItemManager)
             m_pRenderItemManager->RetryInvalidRenderTargets();
@@ -265,12 +265,12 @@ private:
     IMultiModalCapture*          m_pMultiModalCapture = nullptr;
     std::atomic<bool>            m_bCleanCaptureMode{false};
 
-    bool                         m_bSkipMTARenderThisFrame = false;
-    D3DVIEWPORT9                 m_prevViewportForMTA = {};
-    RECT                         m_prevScissorForMTA = {};
-    DWORD                        m_prevScissorEnableForMTA = FALSE;
-    bool                         m_bRestoreViewportAfterMTA = false;
-    bool                         m_bRestoreScissorAfterMTA = false;
+    bool         m_bSkipMTARenderThisFrame = false;
+    D3DVIEWPORT9 m_prevViewportForMTA = {};
+    RECT         m_prevScissorForMTA = {};
+    DWORD        m_prevScissorEnableForMTA = FALSE;
+    bool         m_bRestoreViewportAfterMTA = false;
+    bool         m_bRestoreScissorAfterMTA = false;
 
     // Fonts
     ID3DXFont* m_pDXFonts[NUM_FONTS];

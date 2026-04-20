@@ -52,28 +52,28 @@ public:
     bool IsInitialized() const { return m_bInitialized; }
 
 private:
-    IMFSinkWriter*  m_pSinkWriter;
-    DWORD           m_dwStreamIndex;
-    LONGLONG        m_iFrameCount;
-    int             m_iFPS;
-    int             m_iWidth;
-    int             m_iHeight;
-    int             m_iBitrate;
-    bool            m_bInitialized;
+    IMFSinkWriter* m_pSinkWriter;
+    DWORD          m_dwStreamIndex;
+    LONGLONG       m_iFrameCount;
+    int            m_iFPS;
+    int            m_iWidth;
+    int            m_iHeight;
+    int            m_iBitrate;
+    bool           m_bInitialized;
 
     // Cached staging resources reused across AddFrame() calls.
     // Invalidated if source texture dimensions/format change.
-    ID3D11Device*           m_pCachedDevice;
-    ID3D11DeviceContext*    m_pCachedContext;
-    ID3D11Texture2D*        m_pCachedStagingTexture;
-    UINT                    m_uCachedStagingWidth;
-    UINT                    m_uCachedStagingHeight;
-    DXGI_FORMAT             m_CachedStagingFormat;
+    ID3D11Device*        m_pCachedDevice;
+    ID3D11DeviceContext* m_pCachedContext;
+    ID3D11Texture2D*     m_pCachedStagingTexture;
+    UINT                 m_uCachedStagingWidth;
+    UINT                 m_uCachedStagingHeight;
+    DXGI_FORMAT          m_CachedStagingFormat;
 
-    bool        InitializeMediaFoundation();
-    bool        CreateSinkWriter(const std::string& path);
-    bool        ConfigureVideoStream();
-    IMFSample*  CreateSampleFromTexture(ID3D11Texture2D* texture);
-    bool        EnsureStagingResources(ID3D11Device* pDevice, const D3D11_TEXTURE2D_DESC& srcDesc);
-    void        ReleaseCachedResources();
+    bool       InitializeMediaFoundation();
+    bool       CreateSinkWriter(const std::string& path);
+    bool       ConfigureVideoStream();
+    IMFSample* CreateSampleFromTexture(ID3D11Texture2D* texture);
+    bool       EnsureStagingResources(ID3D11Device* pDevice, const D3D11_TEXTURE2D_DESC& srcDesc);
+    void       ReleaseCachedResources();
 };

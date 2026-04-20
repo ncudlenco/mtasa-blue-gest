@@ -1638,8 +1638,7 @@ HRESULT CDirect3DEvents9::DrawIndexedPrimitiveGuarded(IDirect3DDevice9* pDevice,
 
     // Segmentation double-draw. Fast-paths to no-op when disabled.
     if (IMultiModalCapture* pCap = CCore::GetSingleton().GetGraphics()->GetMultiModalCapture())
-        pCap->EmitSegmentationDrawIndexed(pDevice, PrimitiveType, BaseVertexIndex, MinVertexIndex,
-                                          NumVertices, startIndex, primCount);
+        pCap->EmitSegmentationDrawIndexed(pDevice, PrimitiveType, BaseVertexIndex, MinVertexIndex, NumVertices, startIndex, primCount);
 
     return hr;
 }

@@ -12,10 +12,10 @@
 #include "CSaveWorkerPool.h"
 #include <objbase.h>
 
-CSaveWorkerPool::CSaveWorkerPool(int numThreads)
-    : m_Stopping(false)
+CSaveWorkerPool::CSaveWorkerPool(int numThreads) : m_Stopping(false)
 {
-    if (numThreads < 1) numThreads = 1;
+    if (numThreads < 1)
+        numThreads = 1;
     m_Threads.reserve(numThreads);
     for (int i = 0; i < numThreads; ++i)
         m_Threads.emplace_back(&CSaveWorkerPool::WorkerLoop, this);

@@ -17,14 +17,14 @@
 void CLuaMultiModalDefs::LoadFunctions()
 {
     constexpr static const std::pair<const char*, lua_CFunction> functions[]{
-        {"captureMultiModalFrame",    CaptureMultiModalFrame},
-        {"startVideoRecording",       StartVideoRecording},
-        {"stopVideoRecording",        StopVideoRecording},
-        {"writeMultiModalMapping",    WriteMultiModalMapping},
+        {"captureMultiModalFrame", CaptureMultiModalFrame},
+        {"startVideoRecording", StartVideoRecording},
+        {"stopVideoRecording", StopVideoRecording},
+        {"writeMultiModalMapping", WriteMultiModalMapping},
         {"setMultiModalSegmentation", SetMultiModalSegmentation},
-        {"setCleanCaptureMode",       SetCleanCaptureMode},
-        {"enableCaptureLogs",         EnableCaptureLogs},
-        {"waitMultiModalPending",     WaitMultiModalPending},
+        {"setCleanCaptureMode", SetCleanCaptureMode},
+        {"enableCaptureLogs", EnableCaptureLogs},
+        {"waitMultiModalPending", WaitMultiModalPending},
     };
 
     for (const auto& [name, func] : functions)
@@ -43,8 +43,10 @@ namespace
     // Reads an optional string field from the stack slot, returns "" if nil/missing.
     std::string OptString(lua_State* luaVM, int index)
     {
-        if (lua_isnoneornil(luaVM, index)) return std::string();
-        if (!lua_isstring(luaVM, index))   return std::string();
+        if (lua_isnoneornil(luaVM, index))
+            return std::string();
+        if (!lua_isstring(luaVM, index))
+            return std::string();
         return std::string(lua_tostring(luaVM, index));
     }
 }
@@ -68,17 +70,15 @@ int CLuaMultiModalDefs::CaptureMultiModalFrame(lua_State* luaVM)
         return 1;
     }
 
-    const std::string rgbPath         = OptString(luaVM, 1);
-    const std::string segPath         = OptString(luaVM, 2);
-    const std::string depthPath       = OptString(luaVM, 3);
-    const bool        saveRgbToVideo  = lua_toboolean(luaVM, 4) != 0;
-    const bool        saveSegToVideo  = lua_toboolean(luaVM, 5) != 0;
-    const bool        saveDepthToVid  = lua_toboolean(luaVM, 6) != 0;
-    const int         jpegQuality     = lua_isnumber(luaVM, 7) ? (int)lua_tointeger(luaVM, 7) : 95;
+    const std::string rgbPath = OptString(luaVM, 1);
+    const std::string segPath = OptString(luaVM, 2);
+    const std::string depthPath = OptString(luaVM, 3);
+    const bool        saveRgbToVideo = lua_toboolean(luaVM, 4) != 0;
+    const bool        saveSegToVideo = lua_toboolean(luaVM, 5) != 0;
+    const bool        saveDepthToVid = lua_toboolean(luaVM, 6) != 0;
+    const int         jpegQuality = lua_isnumber(luaVM, 7) ? (int)lua_tointeger(luaVM, 7) : 95;
 
-    bool ok = pCapture->CaptureMultiModalFrame(rgbPath, segPath, depthPath,
-                                                saveRgbToVideo, saveSegToVideo, saveDepthToVid,
-                                                jpegQuality);
+    bool ok = pCapture->CaptureMultiModalFrame(rgbPath, segPath, depthPath, saveRgbToVideo, saveSegToVideo, saveDepthToVid, jpegQuality);
     lua_pushboolean(luaVM, ok);
     return 1;
 }
@@ -104,11 +104,11 @@ int CLuaMultiModalDefs::StartVideoRecording(lua_State* luaVM)
     }
 
     const int         modalityId = (int)lua_tointeger(luaVM, 1);
-    const std::string path       = lua_tostring(luaVM, 2);
-    const int         width      = lua_isnumber(luaVM, 3) ? (int)lua_tointeger(luaVM, 3) : 1920;
-    const int         height     = lua_isnumber(luaVM, 4) ? (int)lua_tointeger(luaVM, 4) : 1080;
-    const int         fps        = lua_isnumber(luaVM, 5) ? (int)lua_tointeger(luaVM, 5) : 30;
-    const int         bitrate    = lua_isnumber(luaVM, 6) ? (int)lua_tointeger(luaVM, 6) : 5000000;
+    const std::string path = lua_tostring(luaVM, 2);
+    const int         width = lua_isnumber(luaVM, 3) ? (int)lua_tointeger(luaVM, 3) : 1920;
+    const int         height = lua_isnumber(luaVM, 4) ? (int)lua_tointeger(luaVM, 4) : 1080;
+    const int         fps = lua_isnumber(luaVM, 5) ? (int)lua_tointeger(luaVM, 5) : 30;
+    const int         bitrate = lua_isnumber(luaVM, 6) ? (int)lua_tointeger(luaVM, 6) : 5000000;
 
     lua_pushboolean(luaVM, pCapture->StartVideoRecording(modalityId, path, width, height, fps, bitrate));
     return 1;
@@ -177,7 +177,7 @@ int CLuaMultiModalDefs::SetMultiModalSegmentation(lua_State* luaVM)
     }
 
     const bool wasEnabled = pCapture->IsSegmentationEnabled();
-    const bool enable     = lua_toboolean(luaVM, 1) != 0;
+    const bool enable = lua_toboolean(luaVM, 1) != 0;
     pCapture->SetSegmentationEnabled(enable);
 
     lua_pushboolean(luaVM, wasEnabled);
@@ -205,7 +205,7 @@ int CLuaMultiModalDefs::SetCleanCaptureMode(lua_State* luaVM)
 
     CGraphicsInterface* pGraphics = g_pCore->GetGraphics();
     const bool          wasEnabled = pGraphics->IsCleanCaptureMode();
-    const bool          enable     = lua_toboolean(luaVM, 1) != 0;
+    const bool          enable = lua_toboolean(luaVM, 1) != 0;
     pGraphics->SetCleanCaptureMode(enable);
 
     lua_pushboolean(luaVM, wasEnabled);

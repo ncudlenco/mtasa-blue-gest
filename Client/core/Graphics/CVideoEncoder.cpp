@@ -29,20 +29,20 @@ static void CreateDirectoryRecursive(const std::string& path)
 static bool g_bMediaFoundationInitialized = false;
 
 CVideoEncoder::CVideoEncoder()
-    : m_pSinkWriter(nullptr)
-    , m_dwStreamIndex(0)
-    , m_iFrameCount(0)
-    , m_iFPS(30)
-    , m_iWidth(1920)
-    , m_iHeight(1080)
-    , m_iBitrate(5000000)
-    , m_bInitialized(false)
-    , m_pCachedDevice(nullptr)
-    , m_pCachedContext(nullptr)
-    , m_pCachedStagingTexture(nullptr)
-    , m_uCachedStagingWidth(0)
-    , m_uCachedStagingHeight(0)
-    , m_CachedStagingFormat(DXGI_FORMAT_UNKNOWN)
+    : m_pSinkWriter(nullptr),
+      m_dwStreamIndex(0),
+      m_iFrameCount(0),
+      m_iFPS(30),
+      m_iWidth(1920),
+      m_iHeight(1080),
+      m_iBitrate(5000000),
+      m_bInitialized(false),
+      m_pCachedDevice(nullptr),
+      m_pCachedContext(nullptr),
+      m_pCachedStagingTexture(nullptr),
+      m_uCachedStagingWidth(0),
+      m_uCachedStagingHeight(0),
+      m_CachedStagingFormat(DXGI_FORMAT_UNKNOWN)
 {
 }
 
@@ -151,12 +151,12 @@ bool CVideoEncoder::CreateSinkWriter(const std::string& path)
         CreateDirectoryRecursive(dir);
 
     // Convert to wide string
-    int len = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
+    int      len = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
     wchar_t* wPath = new wchar_t[len];
     MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wPath, len);
 
     IMFAttributes* pAttributes = nullptr;
-    HRESULT hr = MFCreateAttributes(&pAttributes, 1);
+    HRESULT        hr = MFCreateAttributes(&pAttributes, 1);
     if (FAILED(hr))
     {
         delete[] wPath;
@@ -234,10 +234,8 @@ bool CVideoEncoder::EnsureStagingResources(ID3D11Device* pDevice, const D3D11_TE
     }
 
     // Reuse staging texture if dimensions/format unchanged.
-    if (m_pCachedStagingTexture
-        && m_uCachedStagingWidth == srcDesc.Width
-        && m_uCachedStagingHeight == srcDesc.Height
-        && m_CachedStagingFormat == srcDesc.Format)
+    if (m_pCachedStagingTexture && m_uCachedStagingWidth == srcDesc.Width && m_uCachedStagingHeight == srcDesc.Height &&
+        m_CachedStagingFormat == srcDesc.Format)
     {
         return true;
     }
@@ -304,17 +302,17 @@ IMFSample* CVideoEncoder::CreateSampleFromTexture(ID3D11Texture2D* texture)
         pDevice->Release();
         return nullptr;
     }
-    pDevice->Release();            // EnsureStagingResources holds its own ref
+    pDevice->Release();  // EnsureStagingResources holds its own ref
 
     m_pCachedContext->CopyResource(m_pCachedStagingTexture, texture);
 
     D3D11_MAPPED_SUBRESOURCE mapped;
-    HRESULT hr = m_pCachedContext->Map(m_pCachedStagingTexture, 0, D3D11_MAP_READ, 0, &mapped);
+    HRESULT                  hr = m_pCachedContext->Map(m_pCachedStagingTexture, 0, D3D11_MAP_READ, 0, &mapped);
     if (FAILED(hr))
         return nullptr;
 
     IMFMediaBuffer* pBuffer = nullptr;
-    DWORD bufferSize = m_iWidth * m_iHeight * 4;
+    DWORD           bufferSize = m_iWidth * m_iHeight * 4;
     hr = MFCreateMemoryBuffer(bufferSize, &pBuffer);
     if (FAILED(hr))
     {
@@ -328,11 +326,7 @@ IMFSample* CVideoEncoder::CreateSampleFromTexture(ID3D11Texture2D* texture)
     // D3D11 is top-down, MF RGB32 is bottom-up; flip row-by-row.
     for (int y = 0; y < m_iHeight; y++)
     {
-        memcpy(
-            pBufferData + (y * m_iWidth * 4),
-            (BYTE*)mapped.pData + ((m_iHeight - 1 - y) * mapped.RowPitch),
-            m_iWidth * 4
-        );
+        memcpy(pBufferData + (y * m_iWidth * 4), (BYTE*)mapped.pData + ((m_iHeight - 1 - y) * mapped.RowPitch), m_iWidth * 4);
     }
 
     pBuffer->Unlock();

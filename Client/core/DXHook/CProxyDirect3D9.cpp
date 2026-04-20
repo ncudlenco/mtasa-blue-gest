@@ -19,7 +19,7 @@
 
 // Define DWMWA_USE_IMMERSIVE_DARK_MODE if not already defined (for older Windows SDK)
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+    #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
 extern HINSTANCE g_hModule;

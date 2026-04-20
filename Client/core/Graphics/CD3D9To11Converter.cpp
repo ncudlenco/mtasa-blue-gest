@@ -83,13 +83,10 @@ bool CD3D9To11Converter::EnsureStagingSurface(int width, int height)
     }
 
     // Create new staging surface (CPU-readable)
-    HRESULT hr = m_pD3D9Device->CreateOffscreenPlainSurface(
-        width, height,
-        D3DFMT_X8R8G8B8,        // RGB format
-        D3DPOOL_SYSTEMMEM,      // System memory (CPU-readable)
-        &m_pStagingSurface,
-        nullptr
-    );
+    HRESULT hr = m_pD3D9Device->CreateOffscreenPlainSurface(width, height,
+                                                            D3DFMT_X8R8G8B8,    // RGB format
+                                                            D3DPOOL_SYSTEMMEM,  // System memory (CPU-readable)
+                                                            &m_pStagingSurface, nullptr);
 
     if (FAILED(hr))
     {
@@ -110,7 +107,7 @@ ID3D11Texture2D* CD3D9To11Converter::Convert(IDirect3DSurface9* pD3D9Surface)
 
     // Get surface description
     D3DSURFACE_DESC desc;
-    HRESULT hr = pD3D9Surface->GetDesc(&desc);
+    HRESULT         hr = pD3D9Surface->GetDesc(&desc);
     if (FAILED(hr))
     {
         OutputDebugString("[CD3D9To11Converter] Failed to get surface description\n");
