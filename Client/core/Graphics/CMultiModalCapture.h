@@ -114,6 +114,7 @@ private:
     std::map<uint64_t, int>            m_SegRTSizeBucket;           // (w<<32|h) -> count of Emit calls at that size
     bool                               m_bDiagLogsEnabled;          // gate for all [SegDiag] output + per-draw trace
     int                                m_SegPerDrawTraceRemaining;  // decremented per logged draw; reset in OnPresent
+    uint64_t                           m_FrameIndex;                // incremented each OnPresent; stamped in log lines
 
     // INTZ depth-stencil (Stage 6). INTZ is a FourCC depth format that's
     // simultaneously a depth-stencil target and a sampleable texture, so the

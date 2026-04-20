@@ -16,6 +16,8 @@
 #include <game/CRenderWare.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <fstream>
 #include <future>
@@ -29,6 +31,28 @@
 // seg surface with MTA-internal textures.
 extern std::atomic<bool> g_bInGTAScene;
 extern std::atomic<bool> g_bInMTAScene;
+
+// -----------------------------------------------------------------------
+// Central diagnostic logger. Writes to OutputDebugString AND seg_diag.log
+// in the process CWD. Cheap no-op when `enabled` is false. All [Seg*] tags
+// in this translation unit go through this helper.
+// -----------------------------------------------------------------------
+static void SegDiagLogV(bool enabled, const char* fmt, va_list ap)
+{
+    if (!enabled) return;
+    char buf[1024];
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    if (n < 0) return;
+    OutputDebugStringA(buf);
+    static std::ofstream s_log;
+    if (!s_log.is_open())
+        s_log.open("seg_diag.log", std::ios::out | std::ios::app | std::ios::binary);
+    if (s_log.is_open()) { s_log << buf; s_log.flush(); }
+}
+static void SegDiagLog(bool enabled, const char* fmt, ...)
+{
+    va_list ap; va_start(ap, fmt); SegDiagLogV(enabled, fmt, ap); va_end(ap);
+}
 
 // Forward declaration — definition lives further down near RenderDepthMap.
 static bool TryInstallIntz(IDirect3DDevice9* pDevice, int width, int height,
@@ -59,7 +83,8 @@ CMultiModalCapture::CMultiModalCapture()
       m_iCaptureWidth(0),
       m_iCaptureHeight(0),
       m_bDiagLogsEnabled(false),
-      m_SegPerDrawTraceRemaining(0)
+      m_SegPerDrawTraceRemaining(0),
+      m_FrameIndex(0)
 {
 }
 
@@ -70,11 +95,16 @@ CMultiModalCapture::~CMultiModalCapture()
 
 bool CMultiModalCapture::Initialize(IDirect3DDevice9* pDevice, int width, int height)
 {
+    SegDiagLog(m_bDiagLogsEnabled, "[Seg/Init] enter pDevice=%p w=%d h=%d alreadyInit=%d\n",
+               static_cast<void*>(pDevice), width, height, m_bInitialized ? 1 : 0);
     if (m_bInitialized)
         return true;
 
     if (!pDevice)
+    {
+        SegDiagLog(m_bDiagLogsEnabled, "[Seg/Init] ABORT null device\n");
         return false;
+    }
 
     m_pDevice        = pDevice;
     m_iCaptureWidth  = width;
@@ -129,11 +159,18 @@ bool CMultiModalCapture::Initialize(IDirect3DDevice9* pDevice, int width, int he
     m_pSaveWorkerPool = std::make_unique<CSaveWorkerPool>(poolSize);
 
     m_bInitialized = true;
+    SegDiagLog(m_bDiagLogsEnabled,
+               "[Seg/Init] DONE RGB=%p Seg=%p SegSnap=%p SegDS=%p Depth=%p intz=%d pDevice=%p\n",
+               static_cast<void*>(m_pRGBSurface),        static_cast<void*>(m_pSegmentationSurface),
+               static_cast<void*>(m_pSegmentationSnapshot), static_cast<void*>(m_pSegDepthStencil),
+               static_cast<void*>(m_pDepthSurface),      m_bIntzInstalled ? 1 : 0,
+               static_cast<void*>(m_pDevice));
     return true;
 }
 
 void CMultiModalCapture::Shutdown()
 {
+    SegDiagLog(m_bDiagLogsEnabled, "[Seg/Shutdown] enter init=%d\n", m_bInitialized ? 1 : 0);
     // Stop encoders first; Stop() is idempotent.
     m_RGBVideoEncoder.Stop();
     m_SegmentationVideoEncoder.Stop();
@@ -167,6 +204,7 @@ void CMultiModalCapture::Shutdown()
 
 bool CMultiModalCapture::CreateRenderTargets(int width, int height)
 {
+    SegDiagLog(m_bDiagLogsEnabled, "[Seg/CreateRT] enter w=%d h=%d\n", width, height);
     if (!m_pDevice)
         return false;
 
@@ -174,18 +212,26 @@ bool CMultiModalCapture::CreateRenderTargets(int width, int height)
 
     hr = m_pDevice->CreateRenderTarget(width, height, D3DFMT_X8R8G8B8,
                                        D3DMULTISAMPLE_NONE, 0, FALSE, &m_pRGBSurface, nullptr);
+    SegDiagLog(m_bDiagLogsEnabled, "[Seg/CreateRT] RGB    hr=0x%08X surf=%p\n",
+               static_cast<unsigned>(hr), static_cast<void*>(m_pRGBSurface));
     if (FAILED(hr)) { OutputDebugString("[CMultiModalCapture] RGB RT create failed\n"); return false; }
 
     hr = m_pDevice->CreateRenderTarget(width, height, D3DFMT_X8R8G8B8,
                                        D3DMULTISAMPLE_NONE, 0, FALSE, &m_pSegmentationSurface, nullptr);
+    SegDiagLog(m_bDiagLogsEnabled, "[Seg/CreateRT] Seg    hr=0x%08X surf=%p\n",
+               static_cast<unsigned>(hr), static_cast<void*>(m_pSegmentationSurface));
     if (FAILED(hr)) { OutputDebugString("[CMultiModalCapture] Seg RT create failed\n"); ReleaseRenderTargets(); return false; }
 
     hr = m_pDevice->CreateRenderTarget(width, height, D3DFMT_X8R8G8B8,
                                        D3DMULTISAMPLE_NONE, 0, FALSE, &m_pSegmentationSnapshot, nullptr);
+    SegDiagLog(m_bDiagLogsEnabled, "[Seg/CreateRT] SegSn  hr=0x%08X surf=%p\n",
+               static_cast<unsigned>(hr), static_cast<void*>(m_pSegmentationSnapshot));
     if (FAILED(hr)) { OutputDebugString("[CMultiModalCapture] Seg snapshot RT create failed\n"); ReleaseRenderTargets(); return false; }
 
     hr = m_pDevice->CreateRenderTarget(width, height, D3DFMT_X8R8G8B8,
                                        D3DMULTISAMPLE_NONE, 0, FALSE, &m_pDepthSurface, nullptr);
+    SegDiagLog(m_bDiagLogsEnabled, "[Seg/CreateRT] Depth  hr=0x%08X surf=%p\n",
+               static_cast<unsigned>(hr), static_cast<void*>(m_pDepthSurface));
     if (FAILED(hr)) { OutputDebugString("[CMultiModalCapture] Depth RT create failed\n"); ReleaseRenderTargets(); return false; }
 
     // Seg-owned depth-stencil. Must match the seg RT's dimensions; non-MSAA
@@ -194,6 +240,8 @@ bool CMultiModalCapture::CreateRenderTargets(int width, int height)
     hr = m_pDevice->CreateDepthStencilSurface(width, height, D3DFMT_D24S8,
                                               D3DMULTISAMPLE_NONE, 0, TRUE,
                                               &m_pSegDepthStencil, nullptr);
+    SegDiagLog(m_bDiagLogsEnabled, "[Seg/CreateRT] SegDS  hr=0x%08X surf=%p\n",
+               static_cast<unsigned>(hr), static_cast<void*>(m_pSegDepthStencil));
     if (FAILED(hr)) { OutputDebugString("[CMultiModalCapture] Seg DS create failed\n"); ReleaseRenderTargets(); return false; }
 
     return true;
@@ -592,8 +640,19 @@ bool CMultiModalCapture::CaptureMultiModalFrame(const std::string& rgbPath,
                                                 bool saveDepthToVideo,
                                                 int  jpegQuality)
 {
+    auto t0 = std::chrono::steady_clock::now();
+    SegDiagLog(m_bDiagLogsEnabled,
+               "[Seg/Capture] enter frame=%llu rgb='%s' seg='%s' depth='%s' vRGB=%d vSeg=%d vDepth=%d q=%d\n",
+               static_cast<unsigned long long>(m_FrameIndex),
+               rgbPath.c_str(), segPath.c_str(), depthPath.c_str(),
+               saveRgbToVideo ? 1 : 0, saveSegToVideo ? 1 : 0, saveDepthToVideo ? 1 : 0, jpegQuality);
     if (!m_bInitialized || !m_pDevice || !m_pSaveWorkerPool)
+    {
+        SegDiagLog(m_bDiagLogsEnabled, "[Seg/Capture] ABORT init=%d dev=%p pool=%p\n",
+                   m_bInitialized ? 1 : 0, static_cast<void*>(m_pDevice),
+                   static_cast<void*>(m_pSaveWorkerPool.get()));
         return false;
+    }
 
     const bool wantRGB   = !rgbPath.empty()   || saveRgbToVideo;
     const bool wantSeg   = !segPath.empty()   || saveSegToVideo;
@@ -641,16 +700,49 @@ bool CMultiModalCapture::CaptureMultiModalFrame(const std::string& rgbPath,
     SReadbackSurface rgbRead{}, segRead{}, depthRead{};
     bool readbackOk = true;
     if (!rgbPath.empty())
-        readbackOk = ReadbackToSysMem(m_pRGBSurface, rgbRead) && readbackOk;
+    {
+        bool ok = ReadbackToSysMem(m_pRGBSurface, rgbRead);
+        readbackOk = ok && readbackOk;
+        SegDiagLog(m_bDiagLogsEnabled, "[Seg/Capture] readback RGB ok=%d pitch=%d %ux%u bits=%p\n",
+                   ok ? 1 : 0, rgbRead.lockedPitch, rgbRead.width, rgbRead.height,
+                   static_cast<const void*>(rgbRead.lockedBits));
+    }
     // Read the seg SNAPSHOT, not the live surface — the live one is already
     // being overwritten by the current frame's draws by the time we get here.
     if (!segPath.empty())
-        readbackOk = ReadbackToSysMem(m_pSegmentationSnapshot, segRead) && readbackOk;
+    {
+        bool ok = ReadbackToSysMem(m_pSegmentationSnapshot, segRead);
+        readbackOk = ok && readbackOk;
+        // Sample a few pixels from the locked sysmem surface to see what we're
+        // actually about to save — this is valid because the readback surface
+        // IS a locked sysmem surface, unlike the earlier (broken) probe.
+        uint32_t px0 = 0, pxMid = 0, pxLast = 0;
+        if (ok && segRead.lockedBits && segRead.width > 0 && segRead.height > 0)
+        {
+            auto readPx = [&](UINT x, UINT y) -> uint32_t {
+                const uint8_t* row = segRead.lockedBits + static_cast<size_t>(y) * segRead.lockedPitch;
+                return *reinterpret_cast<const uint32_t*>(row + static_cast<size_t>(x) * 4) & 0x00FFFFFFu;
+            };
+            px0    = readPx(10, segRead.height / 2);
+            pxMid  = readPx(segRead.width / 2, segRead.height / 2);
+            pxLast = readPx(segRead.width - 10, segRead.height / 2);
+        }
+        SegDiagLog(m_bDiagLogsEnabled,
+                   "[Seg/Capture] readback Seg ok=%d pitch=%d %ux%u  px@mid-row: %06X %06X %06X\n",
+                   ok ? 1 : 0, segRead.lockedPitch, segRead.width, segRead.height,
+                   px0, pxMid, pxLast);
+    }
     if (!depthPath.empty())
-        readbackOk = ReadbackToSysMem(m_pDepthSurface, depthRead) && readbackOk;
+    {
+        bool ok = ReadbackToSysMem(m_pDepthSurface, depthRead);
+        readbackOk = ok && readbackOk;
+        SegDiagLog(m_bDiagLogsEnabled, "[Seg/Capture] readback Depth ok=%d pitch=%d %ux%u\n",
+                   ok ? 1 : 0, depthRead.lockedPitch, depthRead.width, depthRead.height);
+    }
 
     if (!readbackOk)
     {
+        SegDiagLog(m_bDiagLogsEnabled, "[Seg/Capture] ABORT readback failure\n");
         ReleaseReadback(rgbRead);
         ReleaseReadback(segRead);
         ReleaseReadback(depthRead);
@@ -704,22 +796,49 @@ bool CMultiModalCapture::CaptureMultiModalFrame(const std::string& rgbPath,
     ReleaseReadback(segRead);
     ReleaseReadback(depthRead);
 
-    return failures.load(std::memory_order_relaxed) == 0;
+    const int nFail = failures.load(std::memory_order_relaxed);
+    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - t0).count();
+    SegDiagLog(m_bDiagLogsEnabled,
+               "[Seg/Capture] DONE frame=%llu failures=%d elapsedMs=%lld\n",
+               static_cast<unsigned long long>(m_FrameIndex), nFail,
+               static_cast<long long>(elapsedMs));
+    return nFail == 0;
 }
 
 void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
 {
     if (!m_bInitialized || !pDevice) return;
 
+    m_FrameIndex++;
+    SegDiagLog(m_bDiagLogsEnabled,
+               "[Seg/Present] frame=%llu segArmed=%d pDevice=%p m_pDevice=%p sameDevice=%d "
+               "emit=%d fired=%d needsClear=%d\n",
+               static_cast<unsigned long long>(m_FrameIndex),
+               m_bSegmentationEnabled ? 1 : 0,
+               static_cast<void*>(pDevice), static_cast<void*>(m_pDevice),
+               (pDevice == m_pDevice) ? 1 : 0,
+               m_SegStats.emitCalls, m_SegStats.drawsFired, m_bSegSurfaceNeedsClear ? 1 : 0);
+
     // Snapshot the backbuffer — the ONLY reliable moment, before the DISCARD
     // swap chain invalidates its content at Present() time.
     if (m_pRGBSurface)
     {
         IDirect3DSurface9* pBackBuffer = nullptr;
-        if (SUCCEEDED(pDevice->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer)) && pBackBuffer)
+        HRESULT hrBB = pDevice->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer);
+        if (SUCCEEDED(hrBB) && pBackBuffer)
         {
-            pDevice->StretchRect(pBackBuffer, nullptr, m_pRGBSurface, nullptr, D3DTEXF_NONE);
+            HRESULT hrSR = pDevice->StretchRect(pBackBuffer, nullptr, m_pRGBSurface, nullptr, D3DTEXF_NONE);
+            SegDiagLog(m_bDiagLogsEnabled,
+                       "[Seg/Present] backbuffer->RGB GetBB=0x%08X BB=%p StretchRect=0x%08X\n",
+                       static_cast<unsigned>(hrBB), static_cast<void*>(pBackBuffer),
+                       static_cast<unsigned>(hrSR));
             pBackBuffer->Release();
+        }
+        else
+        {
+            SegDiagLog(m_bDiagLogsEnabled, "[Seg/Present] GetBackBuffer FAIL hr=0x%08X\n",
+                       static_cast<unsigned>(hrBB));
         }
     }
 
@@ -729,7 +848,12 @@ void CMultiModalCapture::OnPresent(IDirect3DDevice9* pDevice)
     // the first few N+1 draws (usually just the sky) have accumulated.
     // Reading the snapshot here gives us the complete frame N content.
     if (m_pSegmentationSurface && m_pSegmentationSnapshot)
-        pDevice->StretchRect(m_pSegmentationSurface, nullptr, m_pSegmentationSnapshot, nullptr, D3DTEXF_NONE);
+    {
+        HRESULT hrSegSR = pDevice->StretchRect(m_pSegmentationSurface, nullptr,
+                                               m_pSegmentationSnapshot, nullptr, D3DTEXF_NONE);
+        SegDiagLog(m_bDiagLogsEnabled, "[Seg/Present] seg->snapshot StretchRect=0x%08X\n",
+                   static_cast<unsigned>(hrSegSR));
+    }
 
     // --- Diagnostics ---------------------------------------------------
     // Gated by Lua-settable flag (enableCaptureLogs(bool)). When on we write
@@ -807,12 +931,22 @@ static IDirect3DStateBlock9* SetupSegmentationState(IDirect3DDevice9* pDevice,
                                                     IDirect3DSurface9* pSegDS,
                                                     IDirect3DPixelShader9* pConstPS,
                                                     CTextureRegistry& registry,
-                                                    std::unordered_set<uint32_t>& uniqueColorsOut)
+                                                    std::unordered_set<uint32_t>& uniqueColorsOut,
+                                                    bool traceThisDraw)
 {
-    if (!pDevice || !pSegSurface || !pSegDS || !pConstPS) return nullptr;
+    if (!pDevice || !pSegSurface || !pSegDS || !pConstPS)
+    {
+        SegDiagLog(traceThisDraw, "[Seg/Setup] ABORT null arg dev=%p seg=%p segDS=%p ps=%p\n",
+                   static_cast<void*>(pDevice), static_cast<void*>(pSegSurface),
+                   static_cast<void*>(pSegDS),  static_cast<void*>(pConstPS));
+        return nullptr;
+    }
 
     IDirect3DStateBlock9* pBlock = nullptr;
-    if (FAILED(pDevice->CreateStateBlock(D3DSBT_ALL, &pBlock)) || !pBlock)
+    HRESULT hrBlock = pDevice->CreateStateBlock(D3DSBT_ALL, &pBlock);
+    SegDiagLog(traceThisDraw, "[Seg/Setup] CreateStateBlock hr=0x%08X block=%p\n",
+               static_cast<unsigned>(hrBlock), static_cast<void*>(pBlock));
+    if (FAILED(hrBlock) || !pBlock)
         return nullptr;
 
     // Resolve sampler-0 texture to its SA RenderWare name via MTA's D3D-to-RW
@@ -851,10 +985,17 @@ static IDirect3DStateBlock9* SetupSegmentationState(IDirect3DDevice9* pDevice,
         1.0f
     };
 
-    pDevice->SetRenderTarget(0, pSegSurface);
-    pDevice->SetDepthStencilSurface(pSegDS);
-    pDevice->SetPixelShader(pConstPS);
-    pDevice->SetPixelShaderConstantF(0, psConstant, 1);
+    SegDiagLog(traceThisDraw, "[Seg/Setup] key='%s' color=%06X texptr=%p\n",
+               key.c_str(), static_cast<unsigned>(color & 0xFFFFFFu), static_cast<void*>(pTex));
+
+    HRESULT hrRT   = pDevice->SetRenderTarget(0, pSegSurface);
+    HRESULT hrDS   = pDevice->SetDepthStencilSurface(pSegDS);
+    HRESULT hrPS   = pDevice->SetPixelShader(pConstPS);
+    HRESULT hrCst  = pDevice->SetPixelShaderConstantF(0, psConstant, 1);
+    SegDiagLog(traceThisDraw,
+               "[Seg/Setup] SetRT=0x%08X SetDS=0x%08X SetPS=0x%08X SetConst=0x%08X\n",
+               static_cast<unsigned>(hrRT), static_cast<unsigned>(hrDS),
+               static_cast<unsigned>(hrPS), static_cast<unsigned>(hrCst));
 
     // The caller gets exclusive access to the seg RT+DS for the duration of
     // this draw. Clearing is orchestrated by the caller via the needs-clear
@@ -886,6 +1027,7 @@ static void EmitSegmentationCommon(IDirect3DDevice9*      pDevice,
                                    CTextureRegistry&      registry,
                                    bool&                  needsClearFlag,
                                    std::unordered_set<uint32_t>& uniqueColorsOut,
+                                   bool                   traceThisDraw,
                                    DrawFn                 doDraw)
 {
     IDirect3DSurface9* pSavedRT = nullptr;
@@ -893,9 +1035,16 @@ static void EmitSegmentationCommon(IDirect3DDevice9*      pDevice,
     pDevice->GetRenderTarget(0, &pSavedRT);
     pDevice->GetDepthStencilSurface(&pSavedDS);
 
-    IDirect3DStateBlock9* pBlock = SetupSegmentationState(pDevice, pSegSurface, pSegDS, pConstPS, registry, uniqueColorsOut);
+    SegDiagLog(traceThisDraw, "[Seg/Emit] BEFORE savedRT=%p savedDS=%p clearWas=%d\n",
+               static_cast<void*>(pSavedRT), static_cast<void*>(pSavedDS),
+               needsClearFlag ? 1 : 0);
+
+    IDirect3DStateBlock9* pBlock = SetupSegmentationState(pDevice, pSegSurface, pSegDS,
+                                                          pConstPS, registry, uniqueColorsOut,
+                                                          traceThisDraw);
     if (!pBlock)
     {
+        SegDiagLog(traceThisDraw, "[Seg/Emit] SKIP setup returned null\n");
         if (pSavedRT) pSavedRT->Release();
         if (pSavedDS) pSavedDS->Release();
         return;
@@ -903,19 +1052,42 @@ static void EmitSegmentationCommon(IDirect3DDevice9*      pDevice,
 
     if (needsClearFlag)
     {
-        // DIAG: clear to magenta instead of black so a sampled seg pixel of
-        // FF00FF means "clear ran, no replay painted this pixel", 000000
-        // means "something zeroed the RT after our replays", and any other
-        // value means "replay landed this texture's colour here".
-        pDevice->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,
-                       D3DCOLOR_XRGB(255, 0, 255), 1.0f, 0);
+        // Clear to magenta instead of black so a sampled seg pixel of FF00FF
+        // means "clear ran, no replay painted this pixel", 000000 means
+        // "something zeroed the RT after our replays", and any other value
+        // means "replay landed this texture's colour here".
+        HRESULT hrClear = pDevice->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER,
+                                         D3DCOLOR_XRGB(255, 0, 255), 1.0f, 0);
+        SegDiagLog(traceThisDraw, "[Seg/Emit] Clear hr=0x%08X (color=FF00FF z=1.0)\n",
+                   static_cast<unsigned>(hrClear));
         needsClearFlag = false;
     }
 
     doDraw(pDevice);
+    SegDiagLog(traceThisDraw, "[Seg/Emit] doDraw returned\n");
 
-    pBlock->Apply();
+    HRESULT hrApply = pBlock->Apply();
     pBlock->Release();
+    SegDiagLog(traceThisDraw, "[Seg/Emit] Apply hr=0x%08X\n", static_cast<unsigned>(hrApply));
+
+    // Compare the RT/DS the device holds AFTER Apply against the ones we
+    // saved. If Apply leaked, the device is still pointing at the seg
+    // surfaces — the explicit restore below will fix it, but we'd want to
+    // know the leak happened because it hints at a driver quirk.
+    if (traceThisDraw)
+    {
+        IDirect3DSurface9* pAfterRT = nullptr;
+        IDirect3DSurface9* pAfterDS = nullptr;
+        pDevice->GetRenderTarget(0, &pAfterRT);
+        pDevice->GetDepthStencilSurface(&pAfterDS);
+        SegDiagLog(traceThisDraw,
+                   "[Seg/Emit] AFTER-Apply rt=%p ds=%p  (expected rt=%p ds=%p)  leakRT=%d leakDS=%d\n",
+                   static_cast<void*>(pAfterRT), static_cast<void*>(pAfterDS),
+                   static_cast<void*>(pSavedRT), static_cast<void*>(pSavedDS),
+                   (pAfterRT != pSavedRT) ? 1 : 0, (pAfterDS != pSavedDS) ? 1 : 0);
+        if (pAfterRT) pAfterRT->Release();
+        if (pAfterDS) pAfterDS->Release();
+    }
 
     // Unconditional RT+DS restore. If Apply() already did its job this is a
     // no-op on the driver side (same surfaces). If it didn't, we just saved
@@ -1034,7 +1206,8 @@ void CMultiModalCapture::EmitSegmentationDraw(IDirect3DDevice9* pDevice,
     if (!IsDrawingToFullSizeRT(pDevice, static_cast<UINT>(m_iCaptureWidth), static_cast<UINT>(m_iCaptureHeight))) return;
     m_SegStats.passedSizeGate++;
 
-    if (m_bDiagLogsEnabled && m_SegPerDrawTraceRemaining > 0)
+    bool traceThis = m_bDiagLogsEnabled && m_SegPerDrawTraceRemaining > 0;
+    if (traceThis)
     {
         TraceDrawDetails("DP ", pDevice, primitiveType, primitiveCount);
         m_SegPerDrawTraceRemaining--;
@@ -1044,8 +1217,11 @@ void CMultiModalCapture::EmitSegmentationDraw(IDirect3DDevice9* pDevice,
                            m_pConstantColorShader,
                            m_TextureRegistry, m_bSegSurfaceNeedsClear,
                            m_SegUniqueColorsThisFrame,
+                           traceThis,
                            [&](IDirect3DDevice9* d) {
-        d->DrawPrimitive(static_cast<D3DPRIMITIVETYPE>(primitiveType), startVertex, primitiveCount);
+        HRESULT hr = d->DrawPrimitive(static_cast<D3DPRIMITIVETYPE>(primitiveType), startVertex, primitiveCount);
+        SegDiagLog(traceThis, "[Seg/Emit] DrawPrimitive hr=0x%08X type=%u startV=%u cnt=%u\n",
+                   static_cast<unsigned>(hr), primitiveType, startVertex, primitiveCount);
     });
     m_SegStats.drawsFired++;
 }
@@ -1071,7 +1247,8 @@ void CMultiModalCapture::EmitSegmentationDrawIndexed(IDirect3DDevice9* pDevice,
     if (!IsDrawingToFullSizeRT(pDevice, static_cast<UINT>(m_iCaptureWidth), static_cast<UINT>(m_iCaptureHeight))) return;
     m_SegStats.passedSizeGate++;
 
-    if (m_bDiagLogsEnabled && m_SegPerDrawTraceRemaining > 0)
+    bool traceThis = m_bDiagLogsEnabled && m_SegPerDrawTraceRemaining > 0;
+    if (traceThis)
     {
         TraceDrawDetails("DIP", pDevice, primitiveType, primitiveCount);
         m_SegPerDrawTraceRemaining--;
@@ -1081,10 +1258,14 @@ void CMultiModalCapture::EmitSegmentationDrawIndexed(IDirect3DDevice9* pDevice,
                            m_pConstantColorShader,
                            m_TextureRegistry, m_bSegSurfaceNeedsClear,
                            m_SegUniqueColorsThisFrame,
+                           traceThis,
                            [&](IDirect3DDevice9* d) {
-        d->DrawIndexedPrimitive(static_cast<D3DPRIMITIVETYPE>(primitiveType),
-                                baseVertexIndex, minVertexIndex, numVertices,
-                                startIndex, primitiveCount);
+        HRESULT hr = d->DrawIndexedPrimitive(static_cast<D3DPRIMITIVETYPE>(primitiveType),
+                                             baseVertexIndex, minVertexIndex, numVertices,
+                                             startIndex, primitiveCount);
+        SegDiagLog(traceThis, "[Seg/Emit] DIP hr=0x%08X type=%u base=%d minV=%u numV=%u startI=%u cnt=%u\n",
+                   static_cast<unsigned>(hr), primitiveType, baseVertexIndex,
+                   minVertexIndex, numVertices, startIndex, primitiveCount);
     });
     m_SegStats.drawsFired++;
 }
