@@ -30,10 +30,10 @@ extern CGameSA*        pGame;
 // RwFrameForAllObjects struct and callback used to replace dynamic vehicle parts
 struct SReplaceParts
 {
-    const char*        szName;                    // name of the part you want to replace (e.g. 'door_lf' or 'door_rf')
-    unsigned char      ucIndex;                   // index counter for internal usage (0 is the 'ok' part model, 1 is the 'dam' part model)
-    RpAtomicContainer* pReplacements;             // replacement atomics
-    unsigned int       uiReplacements;            // number of replacements
+    const char*        szName;          // name of the part you want to replace (e.g. 'door_lf' or 'door_rf')
+    unsigned char      ucIndex;         // index counter for internal usage (0 is the 'ok' part model, 1 is the 'dam' part model)
+    RpAtomicContainer* pReplacements;   // replacement atomics
+    unsigned int       uiReplacements;  // number of replacements
 };
 static RwObject* ReplacePartsCB(RwObject* object, SReplaceParts* data)
 {
@@ -82,10 +82,10 @@ static bool AddAllAtomicsCB(RpAtomic* atomic, void* pClump)
 // RpClumpForAllAtomics struct and callback used to replace all wheels with a given wheel model
 struct SReplaceWheels
 {
-    const char*        szName;                    // name of the new wheel model
-    RpClump*           pClump;                    // the vehicle's clump
-    RpAtomicContainer* pReplacements;             // replacement atomics
-    unsigned int       uiReplacements;            // number of replacements
+    const char*        szName;          // name of the new wheel model
+    RpClump*           pClump;          // the vehicle's clump
+    RpAtomicContainer* pReplacements;   // replacement atomics
+    unsigned int       uiReplacements;  // number of replacements
 };
 static bool ReplaceWheelsCB(RpAtomic* atomic, void* pData)
 {
@@ -122,9 +122,9 @@ static bool ReplaceWheelsCB(RpAtomic* atomic, void* pData)
 // RpClumpForAllAtomics struct and callback used to replace all atomics for a vehicle
 struct SReplaceAll
 {
-    RpClump*           pClump;                    // the vehicle's clump
-    RpAtomicContainer* pReplacements;             // replacement atomics
-    unsigned int       uiReplacements;            // number of replacements
+    RpClump*           pClump;          // the vehicle's clump
+    RpAtomicContainer* pReplacements;   // replacement atomics
+    unsigned int       uiReplacements;  // number of replacements
 };
 static bool ReplaceAllCB(RpAtomic* atomic, void* pData)
 {
@@ -166,8 +166,8 @@ static bool ReplaceAllCB(RpAtomic* atomic, void* pData)
 // RpClumpForAllAtomics struct and callback used to load the atomics from a specific clump into a container
 struct SLoadAtomics
 {
-    RpAtomicContainer* pReplacements;             // replacement atomics
-    unsigned int       uiReplacements;            // number of replacements
+    RpAtomicContainer* pReplacements;   // replacement atomics
+    unsigned int       uiReplacements;  // number of replacements
 };
 static bool LoadAtomicsCB(RpAtomic* atomic, void* pData)
 {
@@ -291,7 +291,7 @@ RpClump* CRenderWareSA::ReadDFF(const SString& strFilename, const SString& buffe
         if (modelInfo)
         {
             if (auto* modelInfoInterface = modelInfo->GetInterface())
-                ((void(__thiscall*)(CBaseModelInfoSAInterface*))0x4C4C40)(modelInfoInterface); // CBaseModelInfo::DeleteCollisionModel
+                ((void(__thiscall*)(CBaseModelInfoSAInterface*))0x4C4C40)(modelInfoInterface);  // CBaseModelInfo::DeleteCollisionModel
         }
 
         // rockstar's collision hack
@@ -328,7 +328,8 @@ void CRenderWareSA::GetClumpAtomicList(RpClump* pClump, std::vector<RpAtomic*>& 
 {
     RpClumpForAllAtomics(
         pClump,
-        [](RpAtomic* pAtomic, void* pData) {
+        [](RpAtomic* pAtomic, void* pData)
+        {
             reinterpret_cast<std::vector<RpAtomic*>*>(pData)->push_back(pAtomic);
             return true;
         },
@@ -825,16 +826,11 @@ bool CRenderWareSA::GetModelTextures(std::vector<std::tuple<std::string, CPixels
     std::vector<RwTexture*> rwTextureList;
     GetTxdTextures(rwTextureList, pTXD);
 
-    // If texture list is empty after enumeration
-    if (rwTextureList.empty())
-    {
-        if (bLoadedModel)
-            ((void(__cdecl*)(unsigned short))FUNC_RemoveModel)(usModelId);
-        return false;
-    }
-
     // If any texture names specified in vTextureNames, we should only return these
-    const bool bExcludeTextures = !vTextureNames.empty();
+    bool bExcludeTextures = false;
+
+    if (vTextureNames.size() > 0)
+        bExcludeTextures = true;
 
     for (RwTexture* pTexture : rwTextureList)
     {
@@ -887,9 +883,6 @@ void CRenderWareSA::GetTxdTextures(std::vector<RwTexture*>& outTextureList, usho
     if (!pTXD)
         return;
 
-    if (!SharedUtil::IsReadablePointer(pTXD, sizeof(*pTXD)))
-        return;
-
     GetTxdTextures(outTextureList, pTXD);
 }
 
@@ -902,44 +895,10 @@ void CRenderWareSA::GetTxdTextures(std::vector<RwTexture*>& outTextureList, usho
 ////////////////////////////////////////////////////////////////
 void CRenderWareSA::GetTxdTextures(std::vector<RwTexture*>& outTextureList, RwTexDictionary* pTXD)
 {
-    if (!pTXD)
-        return;
-
-    // Validate TXD structure is readable (includes textures member)
-    if (!SharedUtil::IsReadablePointer(pTXD, sizeof(*pTXD)))
-        return;
-
-    // Validate the linked list structure to prevent crash at 0x007F374A
-    // The crash occurs when next pointer is invalid and gets deref'd during iteration
-    RwListEntry* firstNode = pTXD->textures.root.next;
-    if (!SharedUtil::IsReadablePointer(firstNode, sizeof(RwListEntry)))
-        return;
-
-    // Check for empty list (next points back to root - valid case)
-    if (firstNode == &pTXD->textures.root)
-        return;  // Empty TXD is valid
-
-    // Validate the first texture node structure
-    // The texture pointer is at (node - offsetof(RwTexture, TXDList))
-    // which is (node - 8) since TXDList is at offset 8 in RwTexture
-    RwTexture* firstTexture = (RwTexture*)((char*)firstNode - 8);
-    if (!SharedUtil::IsReadablePointer(firstTexture, sizeof(RwTexture)))
-        return;
-
-    // Validate that first node's next pointer is also readable
-    // This catches most corruption cases where the list is broken
-    if (!SharedUtil::IsReadablePointer(firstNode->next, sizeof(RwListEntry)))
-        return;
-
-    constexpr std::size_t kMaxReasonableTextures = 8192;
-    if (outTextureList.size() >= kMaxReasonableTextures)
+    if (pTXD)
     {
-        LogEvent(852, "Texture enumeration aborted", "CRenderWareSA::GetTxdTextures",
-                 SString("Texture list already contains %zu textures (limit: %zu)", outTextureList.size(), kMaxReasonableTextures), 5422);
-        return;
+        RwTexDictionaryForAllTextures(pTXD, StaticGetTextureCB, &outTextureList);
     }
-
-    RwTexDictionaryForAllTextures(pTXD, StaticGetTextureCB, &outTextureList);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -947,27 +906,10 @@ void CRenderWareSA::GetTxdTextures(std::vector<RwTexture*>& outTextureList, RwTe
 // CRenderWareSA::StaticGetTextureCB
 //
 // Callback used in GetTxdTextures
-// Returns false to stop enumeration if limits are hit
 //
 ////////////////////////////////////////////////////////////////
 bool CRenderWareSA::StaticGetTextureCB(RwTexture* texture, std::vector<RwTexture*>* pTextureList)
 {
-    // Fast null check before any heavy validation
-    if (!texture || !pTextureList)
-        return false;
-
-    // Prevent excessive allocations from corrupted TXDs
-    constexpr std::size_t kMaxReasonableTextures = 8192;
-    if (pTextureList->size() >= kMaxReasonableTextures)
-        return false;            // Stop enumeration
-
-    // Note: We don't validate readability here for performance reasons.
-    // The upfront validation in GetTxdTextures catches the first two nodes,
-    // and the SA function crashes before calling this callback if the
-    // linked list is corrupted mid-iteration. If we reach here with a bad
-    // pointer, we'll crash in push_back, but that's acceptable vs the cost
-    // of VirtualQuery on every texture in every TXD.
-    
     pTextureList->push_back(texture);
     return true;
 }

@@ -30,6 +30,8 @@ CNetAPI::CNetAPI(CClientManager* pManager)
     m_ulLastSyncReturnTime = 0;
     m_bStoredReturnSync = false;
     m_bIncreaseTimeoutTime = false;
+    m_ulDeadSyncGraceEndTime = 0;
+    m_bWasDeadOnNetwork = false;
 }
 
 bool CNetAPI::ProcessPacket(unsigned char bytePacketID, NetBitStreamInterface& BitStream)
@@ -295,9 +297,22 @@ void CNetAPI::DoPulse()
 
         // Grab the local player
         CClientPlayer* pPlayer = m_pPlayerManager->GetLocalPlayer();
-        if (pPlayer && !pPlayer->IsDeadOnNetwork())
+        if (pPlayer)
         {
-            unsigned long ulCurrentTime = CClientTime::GetTime();
+            unsigned long           ulCurrentTime = CClientTime::GetTime();
+            constexpr unsigned long DEAD_SYNC_GRACE_MS = 1000;
+
+            const bool bIsDeadOnNetwork = pPlayer->IsDeadOnNetwork();
+            if (bIsDeadOnNetwork && !m_bWasDeadOnNetwork)
+                m_ulDeadSyncGraceEndTime = ulCurrentTime + DEAD_SYNC_GRACE_MS;
+            m_bWasDeadOnNetwork = bIsDeadOnNetwork;
+
+            const auto inOutState = pPlayer->GetVehicleInOutState();
+            const bool bIsTransitioningVehicle =
+                inOutState == VEHICLE_INOUT_GETTING_IN || inOutState == VEHICLE_INOUT_GETTING_OUT || inOutState == VEHICLE_INOUT_JACKING;
+            // Keep dead-player sync for a short period after death and during vehicle transitions.
+            // This preserves corpse/fall settle updates without keeping full puresync active indefinitely.
+            const bool bAllowDeadStateSync = !bIsDeadOnNetwork || ulCurrentTime <= m_ulDeadSyncGraceEndTime || bIsTransitioningVehicle;
 
             // Grab the player vehicle
             CClientVehicle* pVehicle = pPlayer->GetOccupiedVehicle();
@@ -306,7 +321,7 @@ void CNetAPI::DoPulse()
             m_pManager->GetPacketRecorder()->RecordLocalData(pPlayer);
 
             // We should do a puresync?
-            if (IsPureSyncNeeded() && !g_pClientGame->IsDownloadingBigPacket())
+            if (bAllowDeadStateSync && IsPureSyncNeeded() && !g_pClientGame->IsDownloadingBigPacket())
             {
                 // Are in a vehicle?
                 if (pVehicle)
@@ -364,7 +379,7 @@ void CNetAPI::DoPulse()
             else
             {
                 // We should do a keysync?
-                if (IsSmallKeySyncNeeded(pPlayer) && !g_pClientGame->IsDownloadingBigPacket())
+                if (bAllowDeadStateSync && IsSmallKeySyncNeeded(pPlayer) && !g_pClientGame->IsDownloadingBigPacket())
                 {
                     // Send a keysync packet
                     NetBitStreamInterface* pBitStream = g_pNet->AllocateNetBitStream();
@@ -381,9 +396,12 @@ void CNetAPI::DoPulse()
             }
 
             // Time to freeze because of lack of return sync?
+            // Only treat missing return-sync as network trouble while the local player is alive.
+            // During expected dead/spectate periods (e.g. race map voting), return-sync can pause
+            // by design and would otherwise show a misleading "NETWORK TROUBLE" warning.
             if (!g_pClientGame->IsDownloadingBigPacket() && (m_bStoredReturnSync) && (m_ulLastPuresyncTime != 0) && (m_ulLastSyncReturnTime != 0) &&
-                (ulCurrentTime <= m_ulLastPuresyncTime + 5000) && (ulCurrentTime >= m_ulLastSyncReturnTime + 10000) &&
-                (!g_pClientGame->GetLocalPlayer()->m_bIsGettingIntoVehicle) && (!m_bIncreaseTimeoutTime))
+                (ulCurrentTime <= m_ulLastPuresyncTime + 5000) && (ulCurrentTime >= m_ulLastSyncReturnTime + 10000) && !pPlayer->IsDead() &&
+                !pPlayer->IsDying() && (!g_pClientGame->GetLocalPlayer()->m_bIsGettingIntoVehicle) && (!m_bIncreaseTimeoutTime))
             {
                 // No vehicle or vehicle in seat 0?
                 if (!pVehicle || pPlayer->GetOccupiedVehicleSeat() == 0)
@@ -665,7 +683,7 @@ void CNetAPI::ReadKeysync(CClientPlayer* pPlayer, NetBitStreamInterface& BitStre
         // Eventually read vehicle specific keysync data
         ReadSmallVehicleSpecific(pVehicle, BitStream, pVehicle->GetModel());
 
-        if (pVehicle->GetUpgrades()->HasUpgrade(1087))            // Hydraulics?
+        if (pVehicle->GetUpgrades()->HasUpgrade(1087))  // Hydraulics?
         {
             short sRightStickX, sRightStickY;
             BitStream.Read(sRightStickX);
@@ -790,7 +808,7 @@ void CNetAPI::WriteKeysync(CClientPed* pPlayerModel, NetBitStreamInterface& BitS
         CVehicleUpgrades* pUpgrades = pVehicle->GetUpgrades();
         if (pUpgrades)
         {
-            if (pUpgrades->HasUpgrade(1087))            // Hydraulics?
+            if (pUpgrades->HasUpgrade(1087))  // Hydraulics?
             {
                 BitStream.Write(ControllerState.RightStickX);
                 BitStream.Write(ControllerState.RightStickY);
@@ -981,12 +999,13 @@ void CNetAPI::ReadPlayerPuresync(CClientPlayer* pPlayer, NetBitStreamInterface& 
     pPlayer->SetOnFire(flags.data.bIsOnFire);
     pPlayer->SetStealthAiming(flags.data.bStealthAiming);
 
-    if (flags.data.hangingDuringClimb && pPlayer->GetMovementState() != eMovementState::MOVEMENTSTATE_HANGING && pPlayer->GetMovementState() != eMovementState::MOVEMENTSTATE_CLIMB)
+    if (flags.data.hangingDuringClimb && pPlayer->GetMovementState() != eMovementState::MOVEMENTSTATE_HANGING &&
+        pPlayer->GetMovementState() != eMovementState::MOVEMENTSTATE_CLIMB)
         pPlayer->RunClimbingTask();
 
     if (flags.data.bIsInWater && !pPlayer->IsInWater())
         pPlayer->RunSwimTask();
-  
+
     // Remember now as the last puresync time
     pPlayer->SetLastPuresyncTime(CClientTime::GetTime());
     pPlayer->SetLastPuresyncPosition(position.data.vecPosition);
@@ -1052,16 +1071,16 @@ void WriteCameraOrientation(const CVector& vecPositionBase, NetBitStreamInterfac
         uint  uiNumBits;
         float fRange;
     } bitCountTable[4] = {
-        {3, 4.0f},                // 3 bits is +-4        12 bits total
-        {5, 16.0f},               // 5 bits is +-16       18 bits total
-        {9, 256.0f},              // 9 bits is +-256      30 bits total
-        {14, 8192.0f},            // 14 bits is +-8192    45 bits total
+        {3, 4.0f},      // 3 bits is +-4        12 bits total
+        {5, 16.0f},     // 5 bits is +-16       18 bits total
+        {9, 256.0f},    // 9 bits is +-256      30 bits total
+        {14, 8192.0f},  // 14 bits is +-8192    45 bits total
     };
     char idx;
     for (idx = 0; idx < 3; idx++)
     {
         if (bitCountTable[idx].fRange > fUseMaxValue)
-            break;            // We have enough bits now
+            break;  // We have enough bits now
     }
     const uint  uiNumBits = bitCountTable[idx].uiNumBits;
     const float fRange = bitCountTable[idx].fRange;
@@ -1758,10 +1777,10 @@ bool CNetAPI::ReadSmallKeysync(CControllerState& ControllerState, NetBitStreamIn
     short sButtonCross = 255 * keys.data.bButtonCross;
     {
         if (keys.data.ucButtonSquare != 0)
-            sButtonSquare = (short)keys.data.ucButtonSquare;            // override controller state with analog data if present
+            sButtonSquare = (short)keys.data.ucButtonSquare;  // override controller state with analog data if present
 
         if (keys.data.ucButtonCross != 0)
-            sButtonCross = (short)keys.data.ucButtonCross;            // override controller state with analog data if present
+            sButtonCross = (short)keys.data.ucButtonCross;  // override controller state with analog data if present
     }
 
     // Put the result into the controllerstate
@@ -1781,16 +1800,16 @@ bool CNetAPI::ReadSmallKeysync(CControllerState& ControllerState, NetBitStreamIn
 void CNetAPI::WriteSmallKeysync(const CControllerState& ControllerState, NetBitStreamInterface& BitStream)
 {
     SSmallKeysyncSync keys;
-    keys.data.bLeftShoulder1 = (ControllerState.LeftShoulder1 != 0);                   // Action / Secondary-Fire
-    keys.data.bRightShoulder1 = (ControllerState.RightShoulder1 != 0);                 // Aim-Weapon / Handbrake
-    keys.data.bButtonSquare = (ControllerState.ButtonSquare != 0);                     // Jump / Reverse
-    keys.data.bButtonCross = (ControllerState.ButtonCross != 0);                       // Sprint / Accelerate
-    keys.data.bButtonCircle = (ControllerState.ButtonCircle != 0);                     // Fire // Fire
-    keys.data.bButtonTriangle = (ControllerState.ButtonTriangle != 0);                 // Enter/Exit/Special-Attack / Enter/exit
-    keys.data.bShockButtonL = (ControllerState.ShockButtonL != 0);                     // Crouch / Horn
-    keys.data.bPedWalk = (ControllerState.m_bPedWalk != 0);                            // Walk / -
-    keys.data.ucButtonSquare = (unsigned char)ControllerState.ButtonSquare;            // Jump / Reverse
-    keys.data.ucButtonCross = (unsigned char)ControllerState.ButtonCross;              // Sprint / Accelerate
+    keys.data.bLeftShoulder1 = (ControllerState.LeftShoulder1 != 0);         // Action / Secondary-Fire
+    keys.data.bRightShoulder1 = (ControllerState.RightShoulder1 != 0);       // Aim-Weapon / Handbrake
+    keys.data.bButtonSquare = (ControllerState.ButtonSquare != 0);           // Jump / Reverse
+    keys.data.bButtonCross = (ControllerState.ButtonCross != 0);             // Sprint / Accelerate
+    keys.data.bButtonCircle = (ControllerState.ButtonCircle != 0);           // Fire // Fire
+    keys.data.bButtonTriangle = (ControllerState.ButtonTriangle != 0);       // Enter/Exit/Special-Attack / Enter/exit
+    keys.data.bShockButtonL = (ControllerState.ShockButtonL != 0);           // Crouch / Horn
+    keys.data.bPedWalk = (ControllerState.m_bPedWalk != 0);                  // Walk / -
+    keys.data.ucButtonSquare = (unsigned char)ControllerState.ButtonSquare;  // Jump / Reverse
+    keys.data.ucButtonCross = (unsigned char)ControllerState.ButtonCross;    // Sprint / Accelerate
     keys.data.sLeftStickX = ControllerState.LeftStickX;
     keys.data.sLeftStickY = ControllerState.LeftStickY;
 
@@ -1809,10 +1828,10 @@ bool CNetAPI::ReadFullKeysync(CControllerState& ControllerState, NetBitStreamInt
     short sButtonCross = 255 * keys.data.bButtonCross;
     {
         if (keys.data.ucButtonSquare != 0)
-            sButtonSquare = (short)keys.data.ucButtonSquare;            // override controller state with analog data if present
+            sButtonSquare = (short)keys.data.ucButtonSquare;  // override controller state with analog data if present
 
         if (keys.data.ucButtonCross != 0)
-            sButtonCross = (short)keys.data.ucButtonCross;            // override controller state with analog data if present
+            sButtonCross = (short)keys.data.ucButtonCross;  // override controller state with analog data if present
     }
 
     // Put the result into the controllerstate
@@ -2239,9 +2258,8 @@ void CNetAPI::ReadBulletsync(CClientPlayer* player, NetBitStreamInterface& strea
 
     CVector start;
     CVector end;
-    if (!stream.Read(reinterpret_cast<char*>(&start), sizeof(CVector)) ||
-        !stream.Read(reinterpret_cast<char*>(&end), sizeof(CVector)) ||
-        !start.IsValid() || !end.IsValid())
+    if (!stream.Read(reinterpret_cast<char*>(&start), sizeof(CVector)) || !stream.Read(reinterpret_cast<char*>(&end), sizeof(CVector)) || !start.IsValid() ||
+        !end.IsValid())
         return;
 
     std::uint8_t order = 0;

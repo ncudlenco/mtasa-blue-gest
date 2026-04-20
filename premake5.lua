@@ -14,7 +14,13 @@ if ci and ci:lower() == "true" then
 else
 	CI_BUILD = false
 end
+
 GLIBC_COMPAT = os.getenv("GLIBC_COMPAT") == "true"
+MTA_MAETRO = os.getenv("MTA_MAETRO") == "true"
+
+if MTA_MAETRO then
+	require "maetro"
+end
 
 newoption {
 	trigger     = "gccprefix",
@@ -61,6 +67,10 @@ workspace "MTASA"
 		"_TIMESPEC_DEFINED"
 	}
 
+	if MTA_MAETRO then
+		defines { "MTA_MAETRO" }
+	end
+
 	-- Helper function for output path
 	buildpath = function(p) return "%{wks.location}/../Bin/"..p.."/" end
 	copy = function(p) return "{COPY} %{cfg.buildtarget.abspath} \"%{wks.location}../Bin/"..p.."/\"" end
@@ -89,6 +99,12 @@ workspace "MTASA"
 		defines { "MTA_DEBUG" }
 		targetsuffix "_d"
 
+	filter "configurations:Release"
+		defines { "MTA_RELEASE" }
+
+	filter "configurations:Nightly"
+		defines { "MTA_NIGHTLY" }
+
 	filter "configurations:Release or configurations:Nightly"
 		optimize "Speed"	-- "On"=MS:/Ox GCC:/O2  "Speed"=MS:/O2 GCC:/O3  "Full"=MS:/Ox GCC:/O3
 
@@ -111,7 +127,7 @@ workspace "MTASA"
 		symbolspath "$(SolutionDir)Symbols\\$(Configuration)_$(Platform)\\$(ProjectName).pdb"
 
 	filter "system:windows"
-		toolset "v143"
+		toolset "v145"
 		preferredtoolarchitecture "x86_64"
 		staticruntime "On"
 		defines { "WIN32", "_WIN32", "_WIN32_WINNT=0x601", "_MSC_PLATFORM_TOOLSET=$(PlatformToolsetVersion)" }
@@ -123,9 +139,17 @@ workspace "MTASA"
 			path.join(dxdir, "Lib/x86")
 		}
 
+		if MTA_MAETRO then
+			flags { "NoImplicitLink" }
+		end
+
 	filter {"system:windows", "configurations:Debug"}
 		runtime "Release" -- Always use Release runtime
 		defines { "DEBUG" } -- Using DEBUG as _DEBUG is not available with /MT
+
+	-- Disable Edit and Continue on x86 Debug to avoid conflict with /SAFESEH
+	filter {"system:windows", "configurations:Debug", "platforms:x86"}
+		editandcontinue "Off"
 
 	filter { "system:linux or macosx", "configurations:not Debug" }
 		buildoptions { "-fvisibility=hidden" }
@@ -170,6 +194,14 @@ workspace "MTASA"
 		include "vendor/libspeex"
 		include "vendor/detours"
 		include "vendor/lunasvg"
+		include "vendor/googletest"
+
+		if MTA_MAETRO then
+			include "vendor/maetro32"
+		end
+
+		group "Tests"
+		include "Tests/client"
 	end
 
 	filter {}

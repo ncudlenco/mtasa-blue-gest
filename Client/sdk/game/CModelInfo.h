@@ -39,7 +39,7 @@ enum class eModelIdeFlag
     IS_ROAD,
     DRAW_LAST,
     ADDITIVE,
-    IGNORE_LIGHTING,            // Used with animated objects
+    IGNORE_LIGHTING,  // Used with animated objects
     NO_ZBUFFER_WRITE,
     DONT_RECEIVE_SHADOWS,
     IS_GLASS_TYPE_1,
@@ -162,7 +162,6 @@ public:
     virtual BYTE           GetVehicleType() const noexcept = 0;
     virtual void           Request(EModelRequestType requestType, const char* szTag /* = NULL*/) = 0;
     virtual bool           IsLoaded() = 0;
-    virtual bool           IsCollisionLoaded() = 0;
     virtual unsigned short GetFlags() = 0;
     virtual unsigned short GetOriginalFlags() = 0;
     virtual void           SetFlags(unsigned short usFlags) = 0;

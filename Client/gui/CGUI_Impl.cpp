@@ -12,6 +12,7 @@
 #include "StdInc.h"
 #include "GuiCleanup.h"
 #include "CEGUIExceptions.h"
+#include <core/D3DProxyDeviceGuids.h>
 #include <SharedUtil.Misc.h>
 
 using std::list;
@@ -23,54 +24,71 @@ void CGUI_Impl::DestroyElementRecursive(CGUIElement* pElement)
 
     if (auto* pImpl = dynamic_cast<CGUIElement_Impl*>(pElement))
     {
-        DestroyGuiWindowRecursive(pImpl->GetWindow());
+        CEGUI::Window* pWindow = pImpl->GetWindow();
+        if (pWindow)
+            DestroyGuiWindowRecursive(pWindow);
+        else
+            delete pElement;
         return;
     }
 
     delete pElement;
 }
 
-#define CGUI_MTA_DEFAULT_FONT       "tahoma.ttf"        // %WINDIR%/font/<...>
-#define CGUI_MTA_DEFAULT_FONT_BOLD  "tahomabd.ttf"      // %WINDIR%/font/<...>
-#define CGUI_MTA_CLEAR_FONT         "verdana.ttf"       // %WINDIR%/font/<...>
+#define CGUI_MTA_DEFAULT_FONT      "tahoma.ttf"    // %WINDIR%/font/<...>
+#define CGUI_MTA_DEFAULT_FONT_BOLD "tahomabd.ttf"  // %WINDIR%/font/<...>
+#define CGUI_MTA_CLEAR_FONT        "verdana.ttf"   // %WINDIR%/font/<...>
 
-#define CGUI_MTA_DEFAULT_REG        "Tahoma (TrueType)"
-#define CGUI_MTA_DEFAULT_REG_BOLD   "Tahoma Bold (TrueType)"
-#define CGUI_MTA_CLEAR_REG          "Verdana (TrueType)"
+#define CGUI_MTA_DEFAULT_REG      "Tahoma (TrueType)"
+#define CGUI_MTA_DEFAULT_REG_BOLD "Tahoma Bold (TrueType)"
+#define CGUI_MTA_CLEAR_REG        "Verdana (TrueType)"
 
-#define CGUI_MTA_SUBSTITUTE_FONT    "cgui/unifont.ttf"  // GTA/MTA/<...>
-#define CGUI_MTA_SANS_FONT          "cgui/sans.ttf"     // GTA/MTA/<...>
-#define CGUI_SA_HEADER_FONT         "cgui/saheader.ttf" // GTA/MTA/<...>
-#define CGUI_SA_GOTHIC_FONT         "cgui/sagothic.ttf" // GTA/MTA/<...>
-#define CGUI_SA_HEADER_SIZE         26
-#define CGUI_SA_GOTHIC_SIZE         47
-#define CGUI_MTA_SANS_FONT_SIZE     9
+#define CGUI_MTA_SUBSTITUTE_FONT "cgui/unifont.ttf"   // GTA/MTA/<...>
+#define CGUI_MTA_SANS_FONT       "cgui/sans.ttf"      // GTA/MTA/<...>
+#define CGUI_SA_HEADER_FONT      "cgui/saheader.ttf"  // GTA/MTA/<...>
+#define CGUI_SA_GOTHIC_FONT      "cgui/sagothic.ttf"  // GTA/MTA/<...>
+#define CGUI_SA_HEADER_SIZE      26
+#define CGUI_SA_GOTHIC_SIZE      47
+#define CGUI_MTA_SANS_FONT_SIZE  9
 
-CGUI_Impl::CGUI_Impl(IDirect3DDevice9* pDevice) : 
-    m_HasSchemeLoaded(false), 
-    m_fCurrentServerCursorAlpha(1.0f),
-    m_pDevice(pDevice),
-    m_pRenderer(nullptr),
-    m_pSystem(nullptr),
-    m_pFontManager(nullptr),
-    m_pImageSetManager(nullptr),
-    m_pSchemeManager(nullptr),
-    m_pWindowManager(nullptr),
-    m_pTop(nullptr),
-    m_pCursor(nullptr),
-    m_pDefaultFont(nullptr),
-    m_pSmallFont(nullptr),
-    m_pBoldFont(nullptr),
-    m_pClearFont(nullptr),
-    m_pSAHeaderFont(nullptr),
-    m_pSAGothicFont(nullptr),
-    m_pSansFont(nullptr),
-    m_pUniFont(nullptr),
-    m_nextRedrawHandle(1),
-    m_ulPreviousUnique(0),
-    m_eInputMode(INPUTMODE_NO_BINDS_ON_EDIT),
-    m_Channel(INPUT_CORE)
+CGUI_Impl::CGUI_Impl(IDirect3DDevice9* pDevice)
+    : m_HasSchemeLoaded(false),
+      m_fCurrentServerCursorAlpha(1.0f),
+      m_pDevice(pDevice),
+      m_pRenderer(nullptr),
+      m_pSystem(nullptr),
+      m_pFontManager(nullptr),
+      m_pImageSetManager(nullptr),
+      m_pSchemeManager(nullptr),
+      m_pWindowManager(nullptr),
+      m_pTop(nullptr),
+      m_pCursor(nullptr),
+      m_pDefaultFont(nullptr),
+      m_pSmallFont(nullptr),
+      m_pBoldFont(nullptr),
+      m_pClearFont(nullptr),
+      m_pSAHeaderFont(nullptr),
+      m_pSAGothicFont(nullptr),
+      m_pSansFont(nullptr),
+      m_pUniFont(nullptr),
+      m_nextRedrawHandle(1),
+      m_ulPreviousUnique(0),
+      m_eInputMode(INPUTMODE_NO_BINDS_ON_EDIT),
+      m_Channel(INPUT_CORE)
 {
+#ifdef MTA_DEBUG
+    {
+        IUnknown*     pProxyMarker = nullptr;
+        const HRESULT hr = pDevice ? pDevice->QueryInterface(CProxyDirect3DDevice9_GUID, reinterpret_cast<void**>(&pProxyMarker)) : E_POINTER;
+        if (SUCCEEDED(hr) && pProxyMarker)
+        {
+            pProxyMarker->Release();
+        }
+        else
+        {
+        }
+    }
+#endif
     m_RenderOkTimer.SetMaxIncrement(100);
 
     // Callback arrays are default-initialized to empty state by their constructors
@@ -138,10 +156,20 @@ CGUI_Impl::~CGUI_Impl()
     delete m_pSAHeaderFont;
     delete m_pSAGothicFont;
     delete m_pSansFont;
-    
+
     // Clean up CEGUI system - this automatically deletes the renderer
     delete CEGUI::System::getSingletonPtr();
     // DO NOT delete m_pRenderer - it's already deleted by System destructor
+}
+
+void CGUI_Impl::CreateRootWindow()
+{
+    if (!m_pWindowManager || !m_pSystem)
+        return;
+
+    // Create dummy GUI root
+    m_pTop = reinterpret_cast<CEGUI::DefaultWindow*>(m_pWindowManager->createWindow("DefaultWindow", "guiroot"));
+    m_pSystem->setGUISheet(m_pTop);
 }
 
 void CGUI_Impl::SetSkin(const char* szName)
@@ -162,12 +190,8 @@ void CGUI_Impl::SetSkin(const char* szName)
 
     CEGUI::System::getSingleton().setDefaultMouseCursor("CGUI-Images", "MouseArrow");
 
-    // Destroy any windows we already have
-    CEGUI::WindowManager::getSingleton().destroyAllWindows();
-
-    // Create dummy GUI root
-    m_pTop = reinterpret_cast<CEGUI::DefaultWindow*>(m_pWindowManager->createWindow("DefaultWindow", "guiroot"));
-    m_pSystem->setGUISheet(m_pTop);
+    // Clean up CEGUI - this also re-creates the root window
+    Cleanup();
 
     // Disable single click timeouts
     m_pSystem->setSingleClickTimeout(100000000.0f);
@@ -327,28 +351,31 @@ bool CGUI_Impl::GetGUIInputEnabled()
             break;
         case INPUTMODE_NO_BINDS_ON_EDIT:
         {
-            CEGUI::Window* pActiveWindow = m_pTop->getActiveChild();
-            if (!pActiveWindow || pActiveWindow == m_pTop || !pActiveWindow->isVisible())
+            if (m_pTop)
             {
-                return false;
-            }
-            if (pActiveWindow->getType() == "CGUI/Editbox")
-            {
-                CEGUI::Editbox* pEditBox = reinterpret_cast<CEGUI::Editbox*>(pActiveWindow);
-                return (!pEditBox->isReadOnly() && pEditBox->hasInputFocus());
-            }
-            else if (pActiveWindow->getType() == "CGUI/MultiLineEditbox")
-            {
-                CEGUI::MultiLineEditbox* pMultiLineEditBox = reinterpret_cast<CEGUI::MultiLineEditbox*>(pActiveWindow);
-                return (!pMultiLineEditBox->isReadOnly() && pMultiLineEditBox->hasInputFocus());
-            }
-            else if (pActiveWindow->getType() == CGUIWEBBROWSER_NAME)
-            {
-                auto pElement = reinterpret_cast<CGUIElement_Impl*>(pActiveWindow->getUserData());
-                if (pElement->GetType() == CGUI_WEBBROWSER)
+                CEGUI::Window* pActiveWindow = m_pTop->getActiveChild();
+                if (!pActiveWindow || pActiveWindow == m_pTop || !pActiveWindow->isVisible())
                 {
-                    auto pWebBrowser = reinterpret_cast<CGUIWebBrowser_Impl*>(pElement);
-                    return pWebBrowser->HasInputFocus();
+                    return false;
+                }
+                if (pActiveWindow->getType() == "CGUI/Editbox")
+                {
+                    CEGUI::Editbox* pEditBox = reinterpret_cast<CEGUI::Editbox*>(pActiveWindow);
+                    return (!pEditBox->isReadOnly() && pEditBox->hasInputFocus());
+                }
+                else if (pActiveWindow->getType() == "CGUI/MultiLineEditbox")
+                {
+                    CEGUI::MultiLineEditbox* pMultiLineEditBox = reinterpret_cast<CEGUI::MultiLineEditbox*>(pActiveWindow);
+                    return (!pMultiLineEditBox->isReadOnly() && pMultiLineEditBox->hasInputFocus());
+                }
+                else if (pActiveWindow->getType() == CGUIWEBBROWSER_NAME)
+                {
+                    auto pElement = reinterpret_cast<CGUIElement_Impl*>(pActiveWindow->getUserData());
+                    if (pElement->GetType() == CGUI_WEBBROWSER)
+                    {
+                        auto pWebBrowser = reinterpret_cast<CGUIWebBrowser_Impl*>(pElement);
+                        return pWebBrowser->HasInputFocus();
+                    }
                 }
             }
             return false;
@@ -371,13 +398,13 @@ eInputMode CGUI_Impl::GetGUIInputMode()
 
 CEGUI::String CGUI_Impl::GetUTFString(const char* szInput)
 {
-    CEGUI::String strUTF = (CEGUI::utf8*)szInput;            // Convert into a CEGUI String
+    CEGUI::String strUTF = (CEGUI::utf8*)szInput;  // Convert into a CEGUI String
     return strUTF;
 }
 
 CEGUI::String CGUI_Impl::GetUTFString(const std::string& strInput)
 {
-    CEGUI::String strUTF = (CEGUI::utf8*)strInput.c_str();            // Convert into a CEGUI String
+    CEGUI::String strUTF = (CEGUI::utf8*)strInput.c_str();  // Convert into a CEGUI String
     return strUTF;
 }
 
@@ -580,6 +607,9 @@ eCursorType CGUI_Impl::GetCursorType()
 
 void CGUI_Impl::AddChild(CGUIElement_Impl* pChild)
 {
+    if (!m_pTop)
+        return;
+
     m_pTop->addChildWindow(pChild->GetWindow());
 }
 
@@ -844,7 +874,7 @@ bool CGUI_Impl::Event_KeyDown(const CEGUI::EventArgs& Args)
                 CEGUI::Window* Wnd = reinterpret_cast<CEGUI::Window*>(KeyboardArgs.window);
                 if (Wnd->getType() == "CGUI/Editbox" || Wnd->getType() == "CGUI/MultiLineEditbox")
                 {
-                    SString clipboardUtf8 = SharedUtil::GetClipboardText();
+                    SString      clipboardUtf8 = SharedUtil::GetClipboardText();
                     std::wstring strClipboardText;
                     try
                     {
@@ -1153,12 +1183,15 @@ bool CGUI_Impl::Event_MouseButtonDown(const CEGUI::EventArgs& Args)
         pElement->Event_OnMouseButtonDown();
     else
     {
-        // If there's no element, we're probably dealing with the root element
-        CEGUI::Window* pActiveWindow = m_pTop->getActiveChild();
-        if (m_pTop == wnd && pActiveWindow)
+        if (m_pTop)
         {
-            // Deactivate active window to trigger onClientGUIBlur
-            pActiveWindow->deactivate();
+            // If there's no element, we're probably dealing with the root element
+            CEGUI::Window* pActiveWindow = m_pTop->getActiveChild();
+            if (m_pTop == wnd && pActiveWindow)
+            {
+                // Deactivate active window to trigger onClientGUIBlur
+                pActiveWindow->deactivate();
+            }
         }
     }
 
@@ -1395,11 +1428,17 @@ bool CGUI_Impl::Event_RedrawRequested(const CEGUI::EventArgs& Args)
 {
     const CEGUI::WindowEventArgs& e = reinterpret_cast<const CEGUI::WindowEventArgs&>(Args);
 
-    CGUIElement* pElement = reinterpret_cast<CGUIElement*>((e.window)->getUserData());
+    // Get the master window (walks up parent hierarchy for child widgets)
+    CEGUI::Window* pMasterWindow = GetMasterWindow(e.window);
+
+    CGUIElement* pElement = reinterpret_cast<CGUIElement*>(pMasterWindow->getUserData());
     if (pElement)
+    {
         AddToRedrawQueue(pElement);
-    else
-        e.window->forceRedraw();
+    }
+
+    // Immediate redraw of event source for visual responsiveness
+    e.window->forceRedraw();
 
     return true;
 }
@@ -1460,35 +1499,23 @@ void CGUI_Impl::AddToRedrawQueue(CGUIElement* pWindow)
     if (handle == kInvalidRedrawHandle)
         return;
 
-    // Manage the redraw queue, if we redraw the parent of the window passed,
-    // we should not add it to the redraw queue, and if the children are queued,
-    // remove them.
-    for (auto iter = m_RedrawQueue.begin(); iter != m_RedrawQueue.end(); )
+    if (m_RedrawRegistry.find(handle) == m_RedrawRegistry.end())
+        return;
+
+    // If parent is already queued, skip adding chidl
+    // (parent redraw will cover children)
+    if (CGUIElement* pParent = pWindow->GetParent())
     {
-        CGUIElement* pQueued = ResolveRedrawHandle(*iter);
-        if (!pQueued)
+        if (auto* pParentImpl = dynamic_cast<CGUIElement_Impl*>(pParent))
         {
-            iter = m_RedrawQueue.erase(iter);
-            continue;
+            const std::uint32_t parentHandle = pParentImpl->GetRedrawHandle();
+            if (parentHandle != kInvalidRedrawHandle && m_RedrawQueue.count(parentHandle) > 0)
+                return;
         }
-
-        if (pWindow->GetParent() == pQueued)
-        {
-            return;
-        }
-        if (pQueued->GetParent() == pWindow)
-        {
-            iter = m_RedrawQueue.erase(iter);
-            continue;
-        }
-        if (pQueued == pWindow)
-        {
-            return;
-        }
-
-        ++iter;
     }
-    m_RedrawQueue.push_back(handle);
+
+    // insertion with automatic deduplication
+    m_RedrawQueue.insert(handle);
 }
 
 void CGUI_Impl::RemoveFromRedrawQueue(CGUIElement* pWindow)
@@ -1501,7 +1528,7 @@ void CGUI_Impl::RemoveFromRedrawQueue(CGUIElement* pWindow)
     if (handle == kInvalidRedrawHandle)
         return;
 
-    m_RedrawQueue.remove(handle);
+    m_RedrawQueue.erase(handle);
 }
 
 std::uint32_t CGUI_Impl::RegisterRedrawHandle(CGUIElement_Impl* pElement)
@@ -1525,7 +1552,7 @@ void CGUI_Impl::ReleaseRedrawHandle(std::uint32_t handle)
         return;
 
     m_RedrawRegistry.erase(handle);
-    m_RedrawQueue.remove(handle);
+    m_RedrawQueue.erase(handle);
 }
 
 CGUIElement* CGUI_Impl::ResolveRedrawHandle(std::uint32_t handle) const
@@ -1796,4 +1823,34 @@ CEGUI::Window* CGUI_Impl::GetMasterWindow(CEGUI::Window* wnd)
         }
     }
     return wnd;
+}
+
+void CGUI_Impl::Cleanup()
+{
+    try
+    {
+        CleanDeadPool();
+
+        m_pTop = nullptr;
+
+        if (m_pWindowManager)
+            m_pWindowManager->destroyAllWindows();
+
+        // Clear redraw structures that may reference old elements
+        m_RedrawQueue.clear();
+        m_RedrawRegistry.clear();
+
+        // Recreate the root window (destroyed above via destroyAllWindows)
+        CreateRootWindow();
+    }
+    catch (const std::exception& e)
+    {
+        WriteDebugEvent(SString("CGUI_Impl::Cleanup - Exception: %s", e.what()));
+        m_pTop = nullptr;
+    }
+    catch (...)
+    {
+        WriteDebugEvent("CGUI_Impl::Cleanup() failed with unknown exception");
+        m_pTop = nullptr;
+    }
 }

@@ -3,6 +3,7 @@ project "Client Core"
 	kind "SharedLib"
 	targetname "core"
 	targetdir(buildpath("mta"))
+	clangtidy "On"
 
 	filter "system:windows"
 		includedirs { "../../vendor/sparsehash/src/windows" }
@@ -27,6 +28,11 @@ project "Client Core"
 	pchheader "StdInc.h"
 	pchsource "StdInc.cpp"
 
+	filter { "files:FastFailCrashHandler/WerCrashHandler.cpp" }
+		flags { "NoPCH" }
+
+	filter {}
+
 	vpaths {
 		["Headers/*"] = {"**.h", "**.hpp"},
 		["Sources/*"] = "**.cpp",
@@ -50,11 +56,12 @@ project "Client Core"
 		"strmiids",	"odbc32", "odbccp32", "shlwapi", "winmm", "gdi32", "Imm32", "Psapi", "dwmapi",
 		"pthread", "libpng", "jpeg", "zlib", "tinygettext", "discord-rpc", "wintrust", "crypt32",
 		"mfplat", "mfreadwrite", "mfuuid", "windowscodecs",
+		"bcrypt",
 	}
 
 	defines {
 		"INITGUID",
-		"PNG_SETJMP_NOT_SUPPORTED"
+		"PNG_SETJMP_NOT_SUPPORTED",
 	}
 
 	prebuildcommands {
