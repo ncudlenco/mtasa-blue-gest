@@ -1,129 +1,182 @@
-## Multi Theft Auto: San Andreas
+## mtasa-blue-gest
 
-[![Build Status](https://github.com/multitheftauto/mtasa-blue/workflows/Build/badge.svg?event=push&branch=master)](https://github.com/multitheftauto/mtasa-blue/actions?query=branch%3Amaster+event%3Apush) [![Unique servers online](https://img.shields.io/endpoint?url=https%3A%2F%2Fmultitheftauto.com%2Fapi%2Fservers-shields.io.json)](https://community.multitheftauto.com/index.php?p=servers) [![Unique players online](https://img.shields.io/endpoint?url=https%3A%2F%2Fmultitheftauto.com%2Fapi%2Fplayers-shields.io.json)](https://multitheftauto.com) [![Unique players last 24 hours](https://img.shields.io/endpoint?url=https%3A%2F%2Fmultitheftauto.com%2Fapi%2Funique-players-shields.io.json)](https://multitheftauto.com) [![Discord](https://img.shields.io/discord/278474088903606273?label=discord&logo=discord)](https://discord.com/invite/mtasa) [![Crowdin](https://badges.crowdin.net/e/f5dba7b9aa6594139af737c85d81d3aa/localized.svg)](https://multitheftauto.crowdin.com/multitheftauto)
+<p align="center">
+  <a href="https://github.com/ncudlenco/mtasa-blue-gest/releases"><img src="https://img.shields.io/github/v/release/ncudlenco/mtasa-blue-gest?include_prereleases&style=for-the-badge" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge" alt="GPLv3"></a>
+  <a href="https://github.com/ncudlenco/mtasa-blue-gest/stargazers"><img src="https://img.shields.io/github/stars/ncudlenco/mtasa-blue-gest?style=for-the-badge&logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/ncudlenco/mtasa-blue-gest/network/members"><img src="https://img.shields.io/github/forks/ncudlenco/mtasa-blue-gest?style=for-the-badge&logo=github" alt="GitHub forks"></a>
+  <a href="https://github.com/ncudlenco/mtasa-blue-gest/watchers"><img src="https://img.shields.io/github/watchers/ncudlenco/mtasa-blue-gest?style=for-the-badge&logo=github" alt="GitHub watchers"></a>
+</p>
 
-[Multi Theft Auto](https://www.multitheftauto.com/) (MTA) is a software project that adds network play functionality to Rockstar North's Grand Theft Auto game series, in which this functionality is not originally found. It is a unique modification that incorporates an extendable network play element into a proprietary commercial single-player PC game.
+> **mtasa-blue-gest** is a fork of [Multi Theft Auto: San Andreas](https://github.com/multitheftauto/mtasa-blue) with native client-side hooks for deterministic multi-modal frame capture — RGB video and still images, instance segmentation, and per-frame linear depth — extracted directly from the GTA San Andreas D3D9 rendering pipeline, with no screen-recorder or external capture tooling in the loop. It is the client-side companion to [**GEST-Engine** (`ncudlenco/mta-sim`)](https://github.com/ncudlenco/mta-sim), which drives these hooks over the MTA Lua scripting interface to produce multi-actor videos paired with dense frame-level ground-truth annotations.
 
-## Introduction
+This repository is a soft fork of `multitheftauto/mtasa-blue`: upstream MTA features and fixes are tracked on `master`, and the additions below are layered on top as dedicated C++ modules + Lua bindings. Nothing in the vanilla MTA user experience changes unless the bindings are explicitly called from a Lua resource.
 
-Multi Theft Auto is based on code injection and hooking techniques whereby the game is manipulated without altering any original files supplied with the game. The software functions as a game engine that installs itself as an extension of the original game, adding core functionality such as networking and GUI rendering while exposing the original game's engine functionality through a scripting language.
+## Publications
 
-Originally founded back in early 2003 as an experimental piece of C/C++ software, Multi Theft Auto has since grown into an advanced multiplayer platform for gamers and third-party developers. Our software provides a minimal sandbox style gameplay that can be extended through the Lua scripting language in many ways, allowing servers to run custom created game modes with custom content for up to hundreds of online players.
+The GEST system driven by this client is described in:
 
-Formerly a closed-source project, we have migrated to open-source to encourage other developers to contribute as well as showing insight into our project's source code and design for educational reasons.
+> N. Cudlenco, M. Masala, M. Leordeanu. **[Tiny Paper] GEST-Engine: Controllable Multi-Actor Video Synthesis with Perfect Spatiotemporal Annotations.** *ICLR 2026, the 2nd Workshop on World Models: Understanding, Modelling and Scaling.* [OpenReview](https://openreview.net/forum?id=uUofPYVMZH)
 
-Multi Theft Auto is built upon the "Blue" concept that implements a game engine framework. Since the class design of our game framework is based upon Grand Theft Auto's design, we are able to insert our code into the original game. The game is then heavily extended by providing new game functionality (including tweaks and crash fixes) as well as a completely new graphical interface, networking and scripting component.
+The underlying GEST formalism — *Graphs of Events in Space and Time* — was introduced in:
 
-## Gameplay content
+> M. Masala, N. Cudlenco, T. Rebedea, M. Leordeanu. **Explaining Vision and Language Through Graphs of Events in Space and Time.** *ICCV 2023 Workshops (CLVL)*, pp. 2826–2831. [openaccess.thecvf.com](https://openaccess.thecvf.com/content/ICCV2023W/CLVL/html/Masala_Explaining_Vision_and_Language_Through_Graphs_of_Events_in_Space_ICCVW_2023_paper.html) · [arXiv:2309.08612](https://arxiv.org/abs/2309.08612)
 
-By default, Multi Theft Auto provides the minimal sandbox style gameplay of Grand Theft Auto. The gameplay can be heavily extended through the use of the Lua scripting language that has been embedded in the client and server software. Both the server hosting the game, as well as the client playing the game are capable of running and synchronizing Lua scripts. These scripts are layered on top of Multi Theft Auto's game framework that consists of many classes and functions so that the game can be adjusted in virtually any possible way.
+The sample corpus of **398 procedurally generated multi-actor stories** (with engine-rendered videos, dense annotations, and VEO 3.1 / WAN 2.2 neural baselines) is publicly available on HuggingFace: [**nnc-001/gtasa-01**](https://huggingface.co/datasets/nnc-001/gtasa-01).
 
-All gameplay content such as Lua scripts, images, sounds, custom models or textures is grouped into a "resource". This resource is nothing more than an archive (containing the content) and a metadata file describing the content and any extra information (such as dependencies on other resources).
+## What this fork adds
 
-Using a framework based on resources has a number of advantages. It allows content to be easily transferred to clients and servers. Another advantage is that we can provide a way to import and export scripting functionality in a resource. For example, different resources can import (often basic) functionality from one or more common resources. These will then be automatically downloaded and started. Another feature worth mentioning is that server administrators can control the access to specific resources by assigning a number of different user rights to them.
+All extensions are layered on top of upstream; none of them alter vanilla MTA behaviour unless exercised by a Lua script through the new bindings.
 
-## Development
+- **`CMultiModalCapture`** ([`Client/core/Graphics/CMultiModalCapture.{h,cpp}`](Client/core/Graphics/CMultiModalCapture.h)) — single C++ class that owns private render targets for RGB, segmentation and depth and exposes one atomic per-frame capture entry point. Fire-and-forget: the D3D9 readback (~2–4 ms on the render thread) is the only synchronous cost; encoding and file I/O run on a worker pool. A drain barrier (`waitMultiModalPending`) is provided for end-of-session teardown so MP4 trailers are finalized against a stable frame set.
+- **H.264 video encoder** ([`CVideoEncoder`](Client/core/Graphics/CVideoEncoder.h)) — Media Foundation based, one encoder per modality, with cached staging and `IMFMediaBuffer` instances across `AddFrame` calls. Input frames are gated by the configured FPS so sample timestamps stay monotonic regardless of how fast the simulation runs.
+- **WIC image writer** ([`CModalityImageWriter`](Client/core/Graphics/CModalityImageWriter.h)) — PNG / indexed PNG / JPEG saves, with explicit BGRX→BGR repacking to avoid a driver-level WIC format-conversion bug that produced byte-shifted output on some machines.
+- **Depth modality via INTZ** — a sampleable depth-stencil (NVIDIA's `INTZ` FourCC) is installed on the D3D9 device so a lightweight shader pass can linearize the game's own depth buffer into a grayscale PNG. Capability-gated; non-fatal on adapters without INTZ support.
+- **Segmentation double-draw** — a second draw per GTA primitive, replayed onto a private seg RT with a per-texture hashed constant-colour pixel shader. Texture identity is resolved through MTA's wrapped `CD3DDUMMY*` tracking map so the mapping JSON uses real SA RenderWare texture names, not raw pointers. Instrumented end-to-end behind a Lua-toggled flag (`enableCaptureLogs`) that writes `[Seg/*]` / `[SegDraw]` lines to `seg_diag.log` in the client CWD.
+- **Clean-capture mode** ([`SetCleanCaptureMode`](Client/sdk/core/CGraphicsInterface.h)) — mutes MTA's overlay / HUD / cursor / tonemap compositor so external window-capture tools see only the scene GTA rendered, with whatever per-texture shaders a Lua resource has applied via `engineApplyShaderToWorldTexture`.
+- **Lua bindings** ([`CLuaMultiModalDefs`](Client/mods/deathmatch/logic/luadefs/CLuaMultiModalDefs.h)):
 
-Our project's code repository can be found on the [multitheftauto/mtasa-blue](https://github.com/multitheftauto/mtasa-blue/) Git repository at [GitHub](https://github.com/). We are always looking for new developers, so if you're interested, here are some useful links:
+  | Binding | Purpose |
+  |---|---|
+  | `captureMultiModalFrame(rgbPath, segPath, depthPath, saveRgb, saveSeg, saveDepth, quality)` | One-call atomic capture. Paths may be empty to skip an individual modality. Returns after readback; save is async. |
+  | `startVideoRecording(modalityId, path, w, h, fps, bitrate)` / `stopVideoRecording(modalityId)` | Per-modality persistent H.264 recorder. Modality IDs: 0=RGB, 1=Seg, 2=Depth. |
+  | `writeMultiModalMapping(path)` | Writes `{textureName → {color: [r,g,b], modelIds: []}}` JSON matching the sv2l `SegmentationCollector` schema. |
+  | `setMultiModalSegmentation(enabled)` | Arms / disarms the seg double-draw. Takes effect next frame. |
+  | `setCleanCaptureMode(enabled)` | Toggles the overlay mute described above. |
+  | `enableCaptureLogs(enabled)` | Toggles all `[Seg*]` diagnostic output to `seg_diag.log`. |
+  | `waitMultiModalPending()` | Blocks until every queued save completes. Use at session end before `stopVideoRecording`. |
 
-* [Contributors Guide and Coding Guidelines](https://github.com/multitheftauto/mtasa-docs/blob/main/mtasa-blue/CONTRIBUTING.md)
-* [Nightly Builds](https://nightly.multitheftauto.com/)
-* [Milestones](https://github.com/multitheftauto/mtasa-blue/milestones)
+- **INTZ capability advertisement** and **OnPresent hook wiring** in the D3D9 proxy ([`CProxyDirect3D9`](Client/core/DXHook/CProxyDirect3D9.cpp), [`CDirect3DEvents9`](Client/core/DXHook/CDirect3DEvents9.cpp)).
+- **Dev-loop helpers** — [`BUILD_CHECKLIST.md`](BUILD_CHECKLIST.md) is a reminder list for an end-to-end rebuild, and [`deploy-to-MTA.ps1`](deploy-to-MTA.ps1) is a small PowerShell helper some contributors use for iterating on individual DLLs without reinstalling the full client.
 
-### Build Instructions
+## Requirements
 
-#### Windows
+Same as upstream MTA for runtime, plus the toolchain required to rebuild the client:
 
-Prerequisites
-- [Visual Studio 2026](https://visualstudio.microsoft.com/vs/) with:
-  - Desktop development with C++
-  - Optional component *C++ MFC for latest v145 build tools (x86 & x64)* or if that's missing *C++ MFC for x64/x86 (Latest MSVC)*
-- [Microsoft DirectX SDK](https://wiki.multitheftauto.com/wiki/Compiling_MTASA#Microsoft_DirectX_SDK)
-- [Git for Windows](https://git-scm.com/download/win) (Optional)
+- **Windows 10 / 11.** The capture modules use Windows-native APIs (D3D9, Media Foundation, WIC).
+- **Grand Theft Auto: San Andreas PC v1.0** — MTA will not run against later patched releases, the Steam re-release, Mobile, or the Definitive Edition.
+- **Multi Theft Auto: San Andreas 1.6** — see [multitheftauto.com](https://multitheftauto.com/). Only the **client** is patched by this fork; the server binary is unchanged.
+- For building: **Visual Studio 2026** with the **v145 MSVC build tools** (`MSVC v145 — VS 2026 C++ x64/x86 build tools`), the **Microsoft DirectX SDK**, and optionally Git for Windows. Upstream's toolset pin is `v145`; VS 2022's `v143` will not work without a local toolset override.
 
-1. Execute `win-create-projects.bat`
-2. Open `MTASA.sln` in the `Build` directory
-3. Compile
-4. Execute: `win-install-data.bat`
+## Build
 
-Visit the wiki article ["Compiling MTASA"](https://wiki.multitheftauto.com/wiki/Compiling_MTASA) for additional information and error troubleshooting.
+The fork inherits upstream's build system unchanged.
 
-#### GNU/Linux
-
-You can build the MTA:SA server on GNU/Linux distributions only for x86, x86_64, armhf and arm64 CPU architectures. ARM architectures are currently in **experimental phase**, which means they're unstable, untested and may crash randomly. Beware that we only officially support building from x86_64 and that includes cross-compiling for x86, arm and arm64.
-
-**Build dependencies**
-
-*Please always read the utils/docker/Dockerfile for up-to-date build dependencies.*
-
-- make
-- GNU GCC compiler (version 10 or newer)
-- libncurses-dev
-- libmysqlclient-dev
-
-**Build instructions: Script**
-
-**Note:** This script always deletes `Build/` and `Bin/` directories and does a clean build.
-
-```sh
-$ ./linux-build.sh [--arch=x86|x64|arm|arm64] [--config=debug|release] [--cores=<n>]
-$ ./linux-install-data.sh  # optional step
+```powershell
+./win-create-projects.bat
+# then open Build/MTASA.sln and build Release|Win32, OR:
+./win-build.bat
+./win-install-data.bat   # refreshes netc.dll etc. to the version this fork expects
 ```
 
-If build architecture `--arch` is not provided, then it's taken from the environment variable `BUILD_ARCHITECTURE` (defaults to: x64).
+See upstream's [*Compiling MTASA* wiki page](https://wiki.multitheftauto.com/wiki/Compiling_MTASA) for detailed instructions and troubleshooting, and [`BUILD_CHECKLIST.md`](BUILD_CHECKLIST.md) for a fork-specific rebuild reminder list.
 
-If build configuration `--config` is not provided, then it's taken from the environment variable `BUILD_CONFIG` (defaults to: release).
+## Install
 
-If the number of jobs `--cores` is not provided, then the build will default to the amount of CPU cores.
+1. Install MTA:SA 1.6 the normal way from [multitheftauto.com](https://multitheftauto.com/).
+2. Grab the latest **`InstallFiles-win32`** build artifact from this fork's [GitHub Actions](https://github.com/ncudlenco/mtasa-blue-gest/actions) (pick the most recent green `master` run of the Build workflow, scroll to **Artifacts** at the bottom of the run page), or from a [release](https://github.com/ncudlenco/mtasa-blue-gest/releases) if one is tagged.
+3. Unzip the archive over your MTA install directory. The archive is a staging tree that mirrors the MTA install layout, so extracting it overlays only the files that differ from stock MTA.
 
-If you are trying to **cross-compile** to another architecture, then set `AR`, `CC`, `CXX`, `GCC_PREFIX` environment variables accordingly (see `utils/docker/Dockerfile` for an example).
+The server binary is unchanged; only the client side is patched. To roll back, reinstall stock MTA:SA 1.6 from multitheftauto.com.
 
-**Build instructions: Manual**
+For iterating on individual DLLs during development without re-unzipping the whole archive, some contributors use [`deploy-to-MTA.ps1`](deploy-to-MTA.ps1) as a convenience wrapper around the copy/backup/revert cycle. Regular end users don't need it.
 
-```sh
-$ ./utils/premake5 gmake
-$ make -C Build/ config=release_x64 all
-$ ./linux-install-data.sh  # optional step
+## Using the capture bindings from a Lua resource
+
+The bindings are exposed on the client. The companion [GEST-Engine](https://github.com/ncudlenco/mta-sim) resource drives them through its server-side [`MTAClientMultiModalAdapter`](https://github.com/ncudlenco/mta-sim/blob/master/src/features/artifact_collection/adapters/mta/server/MTAClientMultiModalAdapter.lua) and client-side [`ClientMultiModalHandler`](https://github.com/ncudlenco/mta-sim/blob/master/src/features/artifact_collection/adapters/mta/client/ClientMultiModalHandler.lua). Minimal standalone example:
+
+```lua
+-- client.lua (MTA client resource)
+if not captureMultiModalFrame then
+    outputDebugString("native multi-modal capture not available — wrong client build")
+    return
+end
+
+setMultiModalSegmentation(true)     -- arm the seg double-draw
+startVideoRecording(0, "out/raw.mp4", 1920, 1080, 30, 15000000)
+
+addEventHandler("onClientRender", root, function()
+    local n = frameId()              -- your own counter
+    captureMultiModalFrame(
+        string.format("out/frame_%04d_screenshot.jpg", n),
+        string.format("out/frame_%04d_segmentation.png", n),
+        string.format("out/frame_%04d_depth.png", n),
+        true,   -- feed RGB into the H.264 encoder too
+        false,  -- no seg video
+        false,  -- no depth video
+        95)     -- JPEG quality
+end)
+
+-- on teardown
+waitMultiModalPending()              -- drain queued saves
+stopVideoRecording(0)                -- finalize MP4 trailer
+setMultiModalSegmentation(false)
+writeMultiModalMapping("out/segmentation_mapping.json")
 ```
 
-If you don't want to build the release configuration for the x86_64 architecture, you can instead pick another build configuration from: `{debug|release}_{x86|x64|arm|arm64}`.
+## Repository layout
 
-#### GNU/Linux: Docker Build Environment
-
-If you have problems resolving the required dependencies or want maximum compatibility, you can use our dockerized build environment that ships all needed dependencies. We also use this environment to build the official binaries.
-
-**Pulling the Docker image**
-
-```sh
-$ docker pull ghcr.io/multitheftauto/mtasa-blue-build:latest
+```
+Client/
+├── core/
+│   ├── DXHook/
+│   │   ├── CDirect3DEvents9.{cpp,h}      # OnPresent + seg double-draw hook sites
+│   │   └── CProxyDirect3D9.cpp           # INTZ capability advertisement
+│   ├── Graphics/
+│   │   ├── CMultiModalCapture.{cpp,h}    # Main capture orchestrator
+│   │   ├── CModalityImageWriter.{cpp,h}  # WIC PNG / JPEG writer
+│   │   ├── CVideoEncoder.{cpp,h}         # Media Foundation H.264
+│   │   ├── CSaveWorkerPool.{cpp,h}       # packaged_task pool
+│   │   ├── CD3D9To11Converter.{cpp,h}    # Shared-handle interop to MF
+│   │   ├── TextureRegistry.{cpp,h}       # Per-texture color assignment
+│   │   └── CGraphics.{cpp,h}             # Ownership + device invalidate/restore
+│   └── ...
+├── mods/deathmatch/logic/luadefs/
+│   └── CLuaMultiModalDefs.{cpp,h}        # Lua bindings
+├── sdk/core/
+│   ├── IMultiModalCapture.h              # SDK interface
+│   └── CGraphicsInterface.h              # SetCleanCaptureMode
+└── ...                                   # Upstream mtasa-blue tree
+BUILD_CHECKLIST.md
+deploy-to-MTA.ps1
 ```
 
-**Building with Docker**
+## Relationship to upstream MTA
 
-These examples assume that your current directory is the mtasa-blue checkout directory. You should also know that `/build` is the code directory required by our Docker image inside the container. After compiling, you will find the resulting binaries in `./Bin`. To build the unoptimised debug build, add `--config=debug` to the docker run arguments.
+This fork is a minimal, additive overlay: the C++ classes above are new files, and the hook sites in `CGraphics` / `CDirect3DEvents9` / `CProxyDirect3D9` are small, localized insertions next to existing extension points. Upstream merges land on `master` regularly. If you're looking for MTA itself — multiplayer, scripting, community servers, anti-cheat, Linux server builds — go to the canonical [multitheftauto/mtasa-blue](https://github.com/multitheftauto/mtasa-blue). This fork exists solely to make deterministic multi-modal capture available to GEST-Engine.
 
-```sh
-# x86_64
-docker run --rm -v `pwd`:/build ghcr.io/multitheftauto/mtasa-blue-build:latest --arch=x64
+## Star History
 
-# x86
-docker run --rm -v `pwd`:/build ghcr.io/multitheftauto/mtasa-blue-build:latest --arch=x86
+<a href="https://www.star-history.com/#ncudlenco/mtasa-blue-gest&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ncudlenco/mtasa-blue-gest&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ncudlenco/mtasa-blue-gest&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ncudlenco/mtasa-blue-gest&type=Date" />
+ </picture>
+</a>
 
-# arm
-docker run --rm -v `pwd`:/build ghcr.io/multitheftauto/mtasa-blue-build:latest --arch=arm
+## Citation
 
-# arm64
-docker run --rm -v `pwd`:/build ghcr.io/multitheftauto/mtasa-blue-build:latest --arch=arm64
+If you use this system in your research, please cite the ICLR 2026 Tiny Paper:
+
+```bibtex
+@inproceedings{cudlenco2026tiny,
+  title={[Tiny Paper] {GEST}-Engine: Controllable Multi-Actor Video Synthesis with Perfect Spatiotemporal Annotations},
+  author={Nicolae Cudlenco and Mihai Masala and Marius Leordeanu},
+  booktitle={ICLR 2026 the 2nd Workshop on World Models: Understanding, Modelling and Scaling},
+  year={2026},
+  url={https://openreview.net/forum?id=uUofPYVMZH}
+}
 ```
 
-### Premake FAQ
+## License and intellectual property notice
 
-#### How to add new C++ source files?
+Unless otherwise specified, all source code in this repository is licensed under the GPLv3, matching upstream `multitheftauto/mtasa-blue`. See [`LICENSE`](LICENSE).
 
-Execute `win-create-projects.bat`
-
-## License
-
-Unless otherwise specified, all source code hosted on this repository is licensed under the GPLv3 license. See the [LICENSE](./LICENSE) file for more details.
+**Use of this system requires a licensed copy of Grand Theft Auto: San Andreas.** Rockstar Games / Take-Two Interactive own all in-game assets (3D models, textures, animations, environments) and this repository makes no claim to them. Nothing here distributes Rockstar / Take-Two intellectual property — users supply their own legitimate copy of the game. Users are responsible for complying with both Rockstar's EULA and the Multi Theft Auto terms of use. Research data derived from this system (e.g. the [GTASA-01 corpus on HuggingFace](https://huggingface.co/datasets/nnc-001/gtasa-01)) is released for non-commercial academic research only.
 
 Grand Theft Auto and all related trademarks are © Rockstar North 1997–2026.
+
+## Contact
+
+For questions, bug reports, or collaboration inquiries: open an [issue](https://github.com/ncudlenco/mtasa-blue-gest/issues) or email `nicolae.cudlenco@gmail.com`.
