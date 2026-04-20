@@ -12,6 +12,7 @@
 #pragma once
 
 #include "CVector.h"
+#include "IMultiModalCapture.h"
 #include <d3d9.h>
 
 // Vertex type used by the primitives batchers
@@ -189,6 +190,14 @@ public:
     virtual CRenderItemManagerInterface* GetRenderItemManager() = 0;
     virtual CScreenGrabberInterface*     GetScreenGrabber() = 0;
     virtual CPixelsManagerInterface*     GetPixelsManager() = 0;
+    virtual IMultiModalCapture*          GetMultiModalCapture() = 0;
+
+    // Clean capture mode: when enabled, Present skips every MTA/GUI overlay
+    // stage and the borderless tone-map pass, so external window-capture tools
+    // see only the scene (and any per-texture shaders applied by scripts).
+    // Intended to bracket a single segmentation / depth / flat-shader capture.
+    virtual void SetCleanCaptureMode(bool bEnabled) = 0;
+    virtual bool IsCleanCaptureMode() const = 0;
 
     // Transition between GTA and MTA controlled rendering
     virtual void EnteringMTARenderZone() = 0;

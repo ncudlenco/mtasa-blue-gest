@@ -64,4 +64,3 @@ rem Start compiling
     -maxCpuCount
 
 :end
-pause

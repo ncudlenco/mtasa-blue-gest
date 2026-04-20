@@ -23,6 +23,7 @@
 #include "CProxyDirect3DVertexDeclaration.h"
 #include "Graphics/CVideoModeManager.h"
 #include "Graphics/CRenderItem.EffectTemplate.h"
+#include "Graphics/CMultiModalCapture.h"
 
 std::atomic<bool>             g_bInMTAScene{false};
 extern std::atomic<bool>      g_bInGTAScene;
@@ -657,8 +658,17 @@ void CDirect3DEvents9::OnPresent(IDirect3DDevice9* pDevice, IDirect3DDevice9* pS
         bTookScreenShot = true;
     }
 
-    // Draw pre-GUI primitives
-    CGraphics::GetSingleton().DrawPreGUIQueue();
+    // Clean-capture mode: skip every overlay stage and the borderless tone-map
+    // so external window-capture tools see only the (shader-coloured) scene.
+    // The ScreenGrabber pulse still runs so in-engine captures queued before
+    // the mode flipped on don't stall.
+    const bool bCleanCapture = CGraphics::GetSingleton().IsCleanCaptureMode();
+
+    if (!bCleanCapture)
+    {
+        // Draw pre-GUI primitives
+        CGraphics::GetSingleton().DrawPreGUIQueue();
+    }
 
     // Maybe grab screen for upload
     CGraphics::GetSingleton().GetScreenGrabber()->DoPulse();
@@ -666,14 +676,17 @@ void CDirect3DEvents9::OnPresent(IDirect3DDevice9* pDevice, IDirect3DDevice9* pS
     if (bTookScreenShot && g_pCore->IsWebCoreLoaded())
         g_pCore->GetWebCore()->OnPostScreenshot();
 
-    // Draw the GUI
-    CLocalGUI::GetSingleton().Draw();
+    if (!bCleanCapture)
+    {
+        // Draw the GUI
+        CLocalGUI::GetSingleton().Draw();
 
-    // Draw post-GUI primitives
-    CGraphics::GetSingleton().DrawPostGUIQueue();
+        // Draw post-GUI primitives
+        CGraphics::GetSingleton().DrawPostGUIQueue();
 
-    // Redraw the mouse cursor so it will always be over other elements
-    CLocalGUI::GetSingleton().DrawMouseCursor();
+        // Redraw the mouse cursor so it will always be over other elements
+        CLocalGUI::GetSingleton().DrawMouseCursor();
+    }
 
     RunBorderlessToneMap(pStateDevice);
 
@@ -701,6 +714,11 @@ void CDirect3DEvents9::OnPresent(IDirect3DDevice9* pDevice, IDirect3DDevice9* pS
 
     // Make a screenshot if needed (after GUI)
     CScreenShot::CheckForScreenShot(false);
+
+    // Multi-modal capture — OnPresent is a no-op today; reserved for the
+    // Stage 7 seg second-pass render.
+    if (IMultiModalCapture* pCapture = CCore::GetSingleton().GetGraphics()->GetMultiModalCapture())
+        pCapture->OnPresent(pDevice);
 
     TIMING_CHECKPOINT("-OnPresent2");
 
@@ -1562,6 +1580,11 @@ HRESULT CDirect3DEvents9::DrawPrimitiveGuarded(IDirect3DDevice9* pDevice, D3DPRI
         CCore::GetSingleton().OnCrashAverted((uiLastExceptionCode & 0xFFFF) + 1 * 1000000);
         hr = D3DERR_INVALIDCALL;
     }
+
+    // Segmentation double-draw. Fast-paths to no-op when disabled.
+    if (IMultiModalCapture* pCap = CCore::GetSingleton().GetGraphics()->GetMultiModalCapture())
+        pCap->EmitSegmentationDraw(pDevice, PrimitiveType, StartVertex, PrimitiveCount);
+
     return hr;
 }
 
@@ -1612,6 +1635,11 @@ HRESULT CDirect3DEvents9::DrawIndexedPrimitiveGuarded(IDirect3DDevice9* pDevice,
         CCore::GetSingleton().OnCrashAverted((uiLastExceptionCode & 0xFFFF) + 2 * 1000000);
         hr = D3DERR_INVALIDCALL;
     }
+
+    // Segmentation double-draw. Fast-paths to no-op when disabled.
+    if (IMultiModalCapture* pCap = CCore::GetSingleton().GetGraphics()->GetMultiModalCapture())
+        pCap->EmitSegmentationDrawIndexed(pDevice, PrimitiveType, BaseVertexIndex, MinVertexIndex, NumVertices, startIndex, primCount);
+
     return hr;
 }
 

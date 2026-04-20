@@ -21,6 +21,7 @@
 #include "CPrimitive3DBatcher.h"
 #include "CMaterialPrimitive3DBatcher.h"
 #include "CAspectRatioConverter.h"
+#include "CMultiModalCapture.h"
 extern CCore*            g_pCore;
 extern std::atomic<bool> g_bInGTAScene;
 extern std::atomic<bool> g_bInMTAScene;
@@ -1646,6 +1647,16 @@ void CGraphics::OnDeviceCreate(IDirect3DDevice9* pDevice)
     CPixels rectEdge = {CBuffer(g_rectEdgePixelsData, sizeof(g_rectEdgePixelsData))};
     m_RectangleEdgeTexture = GetRenderItemManager()->CreateTexture(nullptr, &rectEdge, false, 8, 8, RFORMAT_ARGB, TADDRESS_CLAMP);
     m_pAspectRatioConverter->Init(GetViewportHeight());
+
+    // Initialize multi-modal capture
+    if (!m_pMultiModalCapture)
+    {
+        m_pMultiModalCapture = new CMultiModalCapture();
+        if (m_pMultiModalCapture)
+        {
+            m_pMultiModalCapture->Initialize(pDevice, GetViewportWidth(), GetViewportHeight());
+        }
+    }
 }
 
 void CGraphics::OnDeviceInvalidate(IDirect3DDevice9* pDevice)
@@ -1673,6 +1684,14 @@ void CGraphics::OnDeviceInvalidate(IDirect3DDevice9* pDevice)
     SAFE_RELEASE(m_pSavedStateBlock);
     SAFE_RELEASE(m_pSavedFrontBufferData);
     SAFE_RELEASE(m_pTempBackBufferData);
+
+    // Shutdown multi-modal capture
+    if (m_pMultiModalCapture)
+    {
+        m_pMultiModalCapture->Shutdown();
+        delete m_pMultiModalCapture;
+        m_pMultiModalCapture = nullptr;
+    }
 
     // Reset render zone tracking on device loss
     m_MTARenderZone = MTA_RZONE_NONE;
@@ -1703,6 +1722,16 @@ void CGraphics::OnDeviceRestore(IDirect3DDevice9* pDevice)
 
     m_pRenderItemManager->OnResetDevice();
     m_pScreenGrabber->OnResetDevice();
+
+    // OnDeviceInvalidate deletes CMultiModalCapture (its render targets are in
+    // D3DPOOL_DEFAULT and would be lost on reset anyway); re-create it here so
+    // Lua bindings have an instance once rendering resumes.
+    if (!m_pMultiModalCapture)
+    {
+        m_pMultiModalCapture = new CMultiModalCapture();
+        if (m_pMultiModalCapture)
+            m_pMultiModalCapture->Initialize(pDevice, GetViewportWidth(), GetViewportHeight());
+    }
 
     const uint uiViewportWidth = GetViewportWidth();
     const uint uiViewportHeight = GetViewportHeight();
